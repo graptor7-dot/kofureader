@@ -7,3 +7,7 @@ kofusync/data/
 .vscode/
 .idea/
 *.log
+
+# Firma de Android: haz copia de seguridad, sin ella no se puede actualizar la app
+android-firma/
+app/android/key.properties

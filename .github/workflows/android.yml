@@ -1,0 +1,67 @@
+# Compila el APK de Android firmado con tu clave (secretos del repositorio).
+# Secretos necesarios (Settings → Secrets and variables → Actions):
+#   ANDROID_KEYSTORE_BASE64   contenido de android-firma/KEYSTORE_BASE64.txt
+#   ANDROID_KEYSTORE_PASSWORD contenido de android-firma/KEYSTORE_PASSWORD.txt
+name: Android
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+
+      - name: Preparar firma
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::Sin secretos de firma: se firma con clave de debug (no se podrá actualizar encima)."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          cat > android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=kofureader
+          keyPassword=$KEYSTORE_PASSWORD
+          EOF
+
+      - run: flutter pub get
+
+      - name: Compilar
+        run: flutter build apk --release
+
+      - name: Renombrar
+        run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/KofuReader.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KofuReader-apk
+          path: app/build/app/outputs/flutter-apk/KofuReader.apk
+          retention-days: 30
+
+      - name: Publicar en Releases (solo con tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/app/outputs/flutter-apk/KofuReader.apk
