@@ -74,5 +74,6 @@ Cada registro lleva `updatedAt` y `deleted` (borrado lógico) para poder sincron
 2. ✅ **Lo tuyo** — listas, favoritos, selección múltiple, aleatorio, filtros, modo de lectura por biblioteca/serie.
 3. ✅ **Sincronización** — KofuSync en Docker (`kofusync/README.md`) + sincronización en la app. Los servidores
    también se sincronizan (sin credenciales); si el mismo Komga se da de alta en dos dispositivos, se fusionan.
-4. 🟡 **iPad** — workflow listo en `.github/workflows/ios.yml`; falta subir el proyecto a GitHub. Guía: `docs/IPAD.md`.
-5. ⬜ **Offline** — descargar libros/series.
+4. ✅ **iPad** — workflow en `.github/workflows/ios.yml`, proyecto en GitHub. Guía: `docs/IPAD.md`.
+5. ✅ **Offline** — descargar libros/series (botón ⬇ en la serie), pantalla Descargas, lector desde disco y
+   progreso guardado sin conexión que se envía a Komga al volver.
