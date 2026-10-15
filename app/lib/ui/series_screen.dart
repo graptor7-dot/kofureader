@@ -59,8 +59,113 @@ class _SeriesScreenState extends State<SeriesScreen> {
         _error = null;
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (!mounted) return;
+      // Sin conexión: mostrar lo descargado de esta serie, si hay.
+      final downloads = AppScope.read(context).downloads;
+      final local = downloads.ofSeries(_sourceId, widget.seriesId);
+      setState(() {
+        if (local.isNotEmpty) {
+          _books = [for (final b in local) b.toKomgaBook(progress: _localProgress(b.bookId))];
+          _offline = true;
+          _error = null;
+        } else {
+          _error = e.toString();
+        }
+      });
     }
+  }
+
+  /// True si la serie se muestra desde las descargas porque no hay conexión.
+  bool _offline = false;
+
+  KomgaReadProgress? _localProgress(String bookId) {
+    final p = AppScope.read(context).downloads.pendingProgress(_sourceId, bookId);
+    return p == null ? null : KomgaReadProgress(p.page, p.completed, null);
+  }
+
+  IconData _downloadIcon(AppState state, List<KomgaBook>? books) {
+    if (books == null || books.isEmpty) return Icons.download_rounded;
+    if (books.any((b) => state.downloads.progressOf(_sourceId, b.id) != null)) return Icons.downloading_rounded;
+    if (books.every((b) => state.downloads.isDownloaded(_sourceId, b.id))) return Icons.download_done_rounded;
+    return Icons.download_rounded;
+  }
+
+  void _enqueue(Iterable<KomgaBook> books) {
+    final state = AppScope.read(context);
+    final pending = books.where((b) => !state.downloads.isDownloaded(_sourceId, b.id)).toList();
+    if (pending.isEmpty) {
+      showToast(context, 'Ya está todo descargado', icon: Icons.download_done_rounded);
+      return;
+    }
+    final series = _series;
+    state.downloads.enqueue(
+      state.client(_sourceId),
+      pending,
+      libraryName: series == null ? null : state.libraryName(_sourceId, series.libraryId),
+    );
+    showToast(
+      context,
+      'Descargando ${pending.length} libro${pending.length == 1 ? '' : 's'}',
+      icon: Icons.download_rounded,
+    );
+  }
+
+  Future<void> _downloadSheet() async {
+    final books = _books;
+    if (books == null) return;
+    final downloads = AppScope.read(context).downloads;
+    final local = downloads.ofSeries(_sourceId, widget.seriesId);
+    final unread = books.where((b) => !b.isRead).toList();
+    final queued = books.where((b) => downloads.progressOf(_sourceId, b.id) != null).toList();
+    await showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.download_rounded),
+              title: Text('Descargar todos (${books.length})'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _enqueue(books);
+              },
+            ),
+            if (unread.isNotEmpty && unread.length != books.length)
+              ListTile(
+                leading: const Icon(Icons.download_for_offline_outlined),
+                title: Text('Descargar sin leer (${unread.length})'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _enqueue(unread);
+                },
+              ),
+            if (queued.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.cancel_outlined),
+                title: Text('Cancelar descargas en curso (${queued.length})'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  for (final b in queued) {
+                    downloads.cancel(_sourceId, b.id);
+                  }
+                },
+              ),
+            if (local.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded, color: Kofu.accent),
+                title: Text('Borrar descargas de esta serie (${local.length})'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  for (final b in local) {
+                    await downloads.delete(b.sourceId, b.bookId);
+                  }
+                },
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   List<KomgaBook> get _visible => _status.isEmpty ? _books! : _books!.where((b) => _status.contains(b.status)).toList();
@@ -144,6 +249,15 @@ class _SeriesScreenState extends State<SeriesScreen> {
                     onPressed: _addSelectedToList,
                     icon: const Icon(Icons.playlist_add_rounded),
                   ),
+                  if (!_offline)
+                    IconButton(
+                      tooltip: 'Descargar',
+                      onPressed: () {
+                        _enqueue(_selection.values);
+                        _selection.clear();
+                      },
+                      icon: const Icon(Icons.download_rounded),
+                    ),
                 ],
               )
             : null,
@@ -168,6 +282,30 @@ class _SeriesScreenState extends State<SeriesScreen> {
               else if (books == null)
                 const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator()))
               else ...[
+                if (_offline)
+                  SliverToBoxAdapter(
+                    child: Container(
+                      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Kofu.surface,
+                        borderRadius: BorderRadius.circular(Kofu.radius),
+                        border: Border.all(color: Kofu.outline),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.cloud_off_rounded, size: 18, color: Kofu.muted),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Sin conexión: mostrando solo los libros descargados',
+                              style: TextStyle(color: Kofu.muted, fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 SliverToBoxAdapter(
                   child: FilterRow(
                     children: [
@@ -200,9 +338,14 @@ class _SeriesScreenState extends State<SeriesScreen> {
         itemCount: visible.length,
         itemBuilder: (context, i) {
           final b = visible[i];
+          final downloaded = state.downloads.isDownloaded(_sourceId, b.id);
+          final cover = downloaded ? state.downloads.coverFile(_sourceId, b.id) : null;
           return CoverCard(
             imageUrl: client.bookThumbnailUrl(b.id),
             headers: client.authHeaders,
+            image: cover == null ? null : FileImage(cover),
+            downloaded: downloaded,
+            downloadProgress: state.downloads.progressOf(_sourceId, b.id),
             title: b.title,
             subtitle: b.inProgress ? 'Pág. ${b.readProgress!.page} de ${b.pagesCount}' : '${b.pagesCount} páginas',
             read: b.isRead,
@@ -339,6 +482,18 @@ class _SeriesScreenState extends State<SeriesScreen> {
                                 icon: Icons.playlist_add_rounded,
                                 onTap: snap == null ? null : () => showAddToListSheet(context, [snap]),
                               ),
+                              if (!_offline) ...[
+                                const SizedBox(width: 8),
+                                _RoundAction(
+                                  tooltip: 'Descargas',
+                                  icon: _downloadIcon(state, books),
+                                  color:
+                                      books != null && books.every((b) => state.downloads.isDownloaded(_sourceId, b.id))
+                                      ? Kofu.read
+                                      : null,
+                                  onTap: books == null ? null : _downloadSheet,
+                                ),
+                              ],
                             ],
                           ),
                         ],

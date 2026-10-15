@@ -1,13 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' show Color;
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../komga/komga_client.dart';
 import '../komga/models.dart';
 import '../theme.dart';
+import 'downloads.dart';
 import 'source.dart';
 import 'sync_service.dart';
 import 'user_data.dart';
@@ -76,6 +77,26 @@ class AppState extends ChangeNotifier {
     data.addListener(_onDataChanged);
     sync.addListener(notifyListeners);
     await sync.init();
+    await downloads.init();
+    downloads.addListener(notifyListeners);
+    // Progreso leído sin conexión: enviarlo en cuanto se pueda.
+    unawaited(flushPendingProgress());
+    _pendingTimer = Timer.periodic(const Duration(minutes: 2), (_) => flushPendingProgress());
+    _lifecycle = AppLifecycleListener(onResume: flushPendingProgress);
+  }
+
+  final DownloadManager downloads = DownloadManager();
+  Timer? _pendingTimer;
+  AppLifecycleListener? _lifecycle;
+
+  Future<void> flushPendingProgress() =>
+      downloads.flushPendingProgress((id) => source(id) != null && hasSecret(id) ? client(id) : null);
+
+  @override
+  void dispose() {
+    _pendingTimer?.cancel();
+    _lifecycle?.dispose();
+    super.dispose();
   }
 
   /// Versiones anteriores guardaban los servidores en SharedPreferences.
@@ -237,7 +258,9 @@ class AppState extends ChangeNotifier {
     if (override != null) return override;
     final stored = _readMode('libmode:$sourceId:$libraryId');
     if (stored != null) return stored;
-    final name = libraryName(sourceId, libraryId);
+    final name =
+        libraryName(sourceId, libraryId) ??
+        downloads.all.where((b) => b.sourceId == sourceId && b.libraryId == libraryId).firstOrNull?.libraryName;
     if (name != null) return _guessMode(name);
     try {
       final libs = await client(sourceId).libraries();

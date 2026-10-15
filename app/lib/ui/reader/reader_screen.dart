@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../../data/app_scope.dart';
 import '../../data/app_state.dart';
+import '../../data/downloads.dart';
 import '../../data/snapshots.dart';
 import '../../data/source.dart';
 import '../../komga/komga_client.dart';
@@ -63,28 +64,49 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _pages = null;
       _error = null;
     });
+    final state = AppScope.read(context);
+    final sourceId = widget.source.id;
     try {
       final book = widget.books[index];
-      final results = await Future.wait([
-        AppScope.read(context).effectiveMode(widget.source.id, book.libraryId, book.seriesId),
-        _client.pages(book.id),
-        // El progreso de la lista puede estar desfasado: se pide el libro de nuevo.
-        _client.book(book.id),
-      ]);
+      final local = state.downloads.downloaded(sourceId, book.id);
+      final modeFuture = state.effectiveMode(sourceId, book.libraryId, book.seriesId);
+      // El progreso de la lista puede estar desfasado: se pide el libro de nuevo
+      // (si está descargado y no hay conexión, se sigue sin él).
+      final freshFuture = local == null
+          ? _client.book(book.id)
+          : _client.book(book.id).timeout(const Duration(seconds: 4)).then<KomgaBook?>((b) => b, onError: (_) => null);
+      final pages = local?.pages ?? await _client.pages(book.id);
+      final fresh = await freshFuture;
+      final mode = await modeFuture;
       if (!mounted || index != _index) return;
-      final fresh = results[2] as KomgaBook;
-      final pages = results[1] as List<KomgaPageInfo>;
-      final start = fresh.inProgress ? fresh.readProgress!.page.clamp(1, pages.length) : 1;
+      final pending = state.downloads.pendingProgress(sourceId, book.id);
+      final known = fresh ?? book;
+      final int start;
+      if (pending != null) {
+        start = pending.completed ? 1 : pending.page;
+      } else {
+        start = known.inProgress ? known.readProgress!.page : 1;
+      }
       setState(() {
-        _mode = results[0] as ReadingMode;
+        _local = local;
+        _mode = mode;
         _pages = pages;
-        _page = start;
-        _startPage = start;
+        _page = start.clamp(1, pages.isEmpty ? 1 : pages.length);
+        _startPage = _page;
         _loadId++;
       });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
+  }
+
+  /// Libro abierto desde disco (null = se lee de Komga).
+  DownloadedBook? _local;
+
+  ImageProvider _image(int page) {
+    final local = _local;
+    if (local != null) return FileImage(AppScope.read(context).downloads.pageFile(local, page));
+    return NetworkImage(_client.pageUrl(_book.id, page), headers: _client.authHeaders);
   }
 
   // ---- Progreso ----
@@ -105,15 +127,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final pages = _pages;
     if (page == null || pages == null) return;
     _pendingSave = null;
+    final downloads = AppScope.read(context).downloads;
+    final sourceId = widget.source.id;
+    final bookId = _book.id;
+    final completed = page >= pages.length;
+    // Se apunta antes de enviar: si no hay conexión, queda para más tarde.
+    downloads.queueProgress(sourceId, bookId, page, completed);
     _client
-        .markProgress(_book.id, page: page, completed: page >= pages.length)
-        .catchError((_) {}); // sin conexión: no interrumpir la lectura
+        .markProgress(bookId, page: page, completed: completed)
+        .then((_) => downloads.clearPendingProgress(sourceId, bookId, page), onError: (_) {});
   }
 
   void _precache(int page) {
     final pages = _pages!;
     for (var p = page + 1; p <= page + 3 && p <= pages.length; p++) {
-      precacheImage(NetworkImage(_client.pageUrl(_book.id, p), headers: _client.authHeaders), context);
+      precacheImage(_image(pages[p - 1].number), context);
     }
   }
 
@@ -158,8 +186,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     } else if (_mode == ReadingMode.vertical) {
       body = _VerticalReader(
         key: ValueKey('v$_loadId'),
-        client: _client,
-        book: _book,
+        image: _image,
         pages: _pages!,
         startPage: _startPage,
         onPageChanged: _onPageChanged,
@@ -169,8 +196,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     } else {
       body = _PagedReader(
         key: ValueKey('p$_loadId${_mode.name}'),
-        client: _client,
-        book: _book,
+        image: _image,
         pages: _pages!,
         startPage: _page,
         rtl: _mode == ReadingMode.pagedRtl,
@@ -310,8 +336,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 // ---------------------------------------------------------------------------
 
 class _PagedReader extends StatefulWidget {
-  final KomgaClient client;
-  final KomgaBook book;
+  final ImageProvider Function(int page) image;
   final List<KomgaPageInfo> pages;
   final int startPage;
   final bool rtl;
@@ -322,8 +347,7 @@ class _PagedReader extends StatefulWidget {
 
   const _PagedReader({
     super.key,
-    required this.client,
-    required this.book,
+    required this.image,
     required this.pages,
     required this.startPage,
     required this.rtl,
@@ -421,8 +445,7 @@ class _PagedReaderState extends State<_PagedReader> {
               itemCount: widget.pages.length,
               onPageChanged: (i) => widget.onPageChanged(i + 1),
               itemBuilder: (context, i) => _ZoomablePage(
-                url: widget.client.pageUrl(widget.book.id, widget.pages[i].number),
-                headers: widget.client.authHeaders,
+                image: widget.image(widget.pages[i].number),
                 onZoomChanged: (z) => setState(() => _zoomed = z),
               ),
             ),
@@ -434,11 +457,10 @@ class _PagedReaderState extends State<_PagedReader> {
 }
 
 class _ZoomablePage extends StatefulWidget {
-  final String url;
-  final Map<String, String> headers;
+  final ImageProvider image;
   final ValueChanged<bool> onZoomChanged;
 
-  const _ZoomablePage({required this.url, required this.headers, required this.onZoomChanged});
+  const _ZoomablePage({required this.image, required this.onZoomChanged});
 
   @override
   State<_ZoomablePage> createState() => _ZoomablePageState();
@@ -475,9 +497,7 @@ class _ZoomablePageState extends State<_ZoomablePage> {
         panEnabled: _zoomed,
         maxScale: 5,
         onInteractionEnd: (_) => _update(),
-        child: SizedBox.expand(
-          child: KomgaImage(url: widget.url, headers: widget.headers, fit: BoxFit.contain),
-        ),
+        child: SizedBox.expand(child: KomgaImage.provider(widget.image, fit: BoxFit.contain)),
       ),
     );
   }
@@ -488,8 +508,7 @@ class _ZoomablePageState extends State<_ZoomablePage> {
 // ---------------------------------------------------------------------------
 
 class _VerticalReader extends StatefulWidget {
-  final KomgaClient client;
-  final KomgaBook book;
+  final ImageProvider Function(int page) image;
   final List<KomgaPageInfo> pages;
   final int startPage;
   final ValueChanged<int> onPageChanged;
@@ -498,8 +517,7 @@ class _VerticalReader extends StatefulWidget {
 
   const _VerticalReader({
     super.key,
-    required this.client,
-    required this.book,
+    required this.image,
     required this.pages,
     required this.startPage,
     required this.onPageChanged,
@@ -575,11 +593,7 @@ class _VerticalReaderState extends State<_VerticalReader> {
                   final p = widget.pages[i];
                   return SizedBox(
                     height: width / _ratio(p),
-                    child: KomgaImage(
-                      url: widget.client.pageUrl(widget.book.id, p.number),
-                      headers: widget.client.authHeaders,
-                      fit: BoxFit.fill,
-                    ),
+                    child: KomgaImage.provider(widget.image(p.number), fit: BoxFit.fill),
                   );
                 },
               ),

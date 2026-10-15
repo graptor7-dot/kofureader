@@ -158,5 +158,12 @@ class KomgaClient {
     _check(res);
   }
 
+  /// Descarga binaria (páginas, portadas). Devuelve los bytes y el tipo MIME.
+  Future<(List<int>, String?)> getBytes(String url) async {
+    final res = await _http.get(Uri.parse(url), headers: authHeaders).timeout(const Duration(seconds: 60));
+    _check(res);
+    return (res.bodyBytes, res.headers['content-type']);
+  }
+
   void close() => _http.close();
 }

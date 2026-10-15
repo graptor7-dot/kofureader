@@ -5,6 +5,7 @@ import '../data/app_state.dart';
 import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
+import 'downloads_screen.dart';
 import 'library_screen.dart';
 import 'list_screen.dart';
 import 'navigation.dart';
@@ -326,9 +327,17 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisSpacing: 16,
           mainAxisSpacing: 16,
         ),
-        itemCount: lists.length + 1,
+        itemCount: lists.length + 2,
         itemBuilder: (context, i) {
           if (i == lists.length) {
+            return _DownloadsCard(
+              onTap: () async {
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => const DownloadsScreen()));
+                _refreshContinue();
+              },
+            );
+          }
+          if (i == lists.length + 1) {
             return _NewListCard(
               onTap: () async {
                 final name = await askListName(context);
@@ -692,6 +701,65 @@ class _ListCard extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _DownloadsCard extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _DownloadsCard({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final downloads = AppScope.of(context).downloads;
+    final count = downloads.all.length;
+    final queued = downloads.queuedCount;
+    final radius = BorderRadius.circular(Kofu.radius + 4);
+    return Material(
+      color: Kofu.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Stack(
+          children: [
+            Positioned(
+              right: -20,
+              bottom: -20,
+              child: Icon(Icons.download_for_offline_rounded, size: 120, color: Kofu.read.withValues(alpha: 0.12)),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  queued > 0
+                      ? const SizedBox.square(
+                          dimension: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Kofu.read),
+                        )
+                      : const Icon(Icons.download_done_rounded, color: Kofu.read),
+                  const Spacer(),
+                  const Text('Descargas', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 2),
+                  Text(
+                    queued > 0
+                        ? '$count libros · $queued en cola'
+                        : count == 0
+                        ? 'Para leer sin conexión'
+                        : '$count libro${count == 1 ? '' : 's'} · ${formatBytes(downloads.totalBytes)}',
+                    style: const TextStyle(fontSize: 12, color: Kofu.muted),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

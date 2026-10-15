@@ -19,7 +19,8 @@ Future<void> openSeries(BuildContext context, Source source, String seriesId, {K
 
 /// Abre un libro suelto: carga su serie para poder pasar al siguiente/anterior.
 Future<void> openBook(BuildContext context, Source source, String bookId, {String? seriesId}) async {
-  final client = AppScope.read(context).client(source.id);
+  final state = AppScope.read(context);
+  final client = state.client(source.id);
   showDialog(
     context: context,
     barrierDismissible: false,
@@ -30,11 +31,24 @@ Future<void> openBook(BuildContext context, Source source, String bookId, {Strin
     final sid = seriesId ?? (await client.book(bookId)).seriesId;
     books = await client.books(sid);
   } catch (e) {
-    if (context.mounted) {
-      Navigator.pop(context);
-      showToast(context, '$e', icon: Icons.error_outline);
+    // Sin conexión: si el libro está descargado, leer con los descargados de su serie.
+    final local = state.downloads.downloaded(source.id, bookId);
+    if (local == null) {
+      if (context.mounted) {
+        Navigator.pop(context);
+        showToast(context, '$e', icon: Icons.error_outline);
+      }
+      return;
     }
-    return;
+    books = [
+      for (final b in state.downloads.ofSeries(source.id, local.seriesId))
+        b.toKomgaBook(
+          progress: switch (state.downloads.pendingProgress(source.id, b.bookId)) {
+            final p? => KomgaReadProgress(p.page, p.completed, null),
+            null => null,
+          },
+        ),
+    ];
   }
   if (!context.mounted) return;
   Navigator.pop(context);

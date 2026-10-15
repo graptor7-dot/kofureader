@@ -2,26 +2,27 @@ import 'package:flutter/material.dart';
 
 import '../../theme.dart';
 
-/// Imagen de Komga con cabeceras de autenticación y aparición suave.
+/// Imagen (de Komga o de un fichero descargado) con aparición suave.
 class KomgaImage extends StatelessWidget {
-  final String url;
-  final Map<String, String> headers;
+  final ImageProvider image;
   final BoxFit fit;
   final Alignment alignment;
 
-  const KomgaImage({
+  /// Imagen de Komga con cabeceras de autenticación.
+  KomgaImage({
     super.key,
-    required this.url,
-    required this.headers,
+    required String url,
+    required Map<String, String> headers,
     this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
-  });
+  }) : image = NetworkImage(url, headers: headers);
+
+  const KomgaImage.provider(this.image, {super.key, this.fit = BoxFit.cover, this.alignment = Alignment.center});
 
   @override
   Widget build(BuildContext context) {
-    return Image.network(
-      url,
-      headers: headers,
+    return Image(
+      image: image,
       fit: fit,
       alignment: alignment,
       gaplessPlayback: true,
@@ -56,6 +57,9 @@ class CoverCard extends StatelessWidget {
   final bool selectionActive;
   final Color? sourceColor;
   final IconData? kindIcon;
+  final ImageProvider? image; // sustituye a imageUrl (p. ej. portada descargada)
+  final bool downloaded;
+  final double? downloadProgress; // no nulo mientras se descarga
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
 
@@ -75,6 +79,9 @@ class CoverCard extends StatelessWidget {
     this.selectionActive = false,
     this.sourceColor,
     this.kindIcon,
+    this.image,
+    this.downloaded = false,
+    this.downloadProgress,
   });
 
   @override
@@ -115,7 +122,7 @@ class CoverCard extends StatelessWidget {
                       fit: StackFit.expand,
                       children: [
                         const ColoredBox(color: Kofu.surfaceHigh),
-                        KomgaImage(url: imageUrl, headers: headers),
+                        image != null ? KomgaImage.provider(image!) : KomgaImage(url: imageUrl, headers: headers),
                         if (read) ColoredBox(color: Colors.black.withValues(alpha: 0.5)),
                         // Degradado inferior para que se lean las insignias.
                         const DecoratedBox(
@@ -137,6 +144,21 @@ class CoverCard extends StatelessWidget {
                               if (kindIcon != null) ...[
                                 const SizedBox(width: 6),
                                 Icon(kindIcon, size: 14, color: Colors.white70),
+                              ],
+                              if (downloadProgress != null) ...[
+                                const SizedBox(width: 6),
+                                SizedBox.square(
+                                  dimension: 14,
+                                  child: CircularProgressIndicator(
+                                    value: downloadProgress == 0 ? null : downloadProgress,
+                                    strokeWidth: 2.5,
+                                    color: Colors.white,
+                                    backgroundColor: Colors.white24,
+                                  ),
+                                ),
+                              ] else if (downloaded) ...[
+                                const SizedBox(width: 6),
+                                const Icon(Icons.download_done_rounded, size: 16, color: Kofu.read),
                               ],
                             ],
                           ),
