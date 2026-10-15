@@ -1,0 +1,13 @@
+services:
+  kofusync:
+    build: .
+    image: kofusync:latest
+    container_name: kofusync
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    ports:
+      # Puerto del host : puerto del contenedor. No lo abras en el router:
+      # se accede por Tailscale (o desde tu red local).
+      - "49200:8080"

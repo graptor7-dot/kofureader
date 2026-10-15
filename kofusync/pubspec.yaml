@@ -1,0 +1,7 @@
+name: kofusync
+description: Servicio de sincronización de KofuReader.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.8.0

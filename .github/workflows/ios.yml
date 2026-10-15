@@ -1,0 +1,47 @@
+# Compila KofuReader para iPad sin firmar (.ipa) en un Mac de GitHub.
+# SideStore/AltStore la firman con tu Apple ID al instalarla.
+name: iOS (sin firmar)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - name: Compilar
+        run: flutter build ios --release --no-codesign
+
+      - name: Empaquetar .ipa
+        run: |
+          mkdir -p build/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ipa/Payload/
+          cd build/ipa
+          zip -qr KofuReader.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KofuReader-ipa
+          path: app/build/ipa/KofuReader.ipa
+          retention-days: 30
+
+      - name: Publicar en Releases (solo con tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/ipa/KofuReader.ipa

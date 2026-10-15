@@ -1,0 +1,9 @@
+# Secretos y datos del servicio de sincronización
+kofusync/.env
+kofusync/data/
+
+# Herramientas locales
+.claude/
+.vscode/
+.idea/
+*.log
