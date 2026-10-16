@@ -217,7 +217,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         startPage: _startPage,
         onPageChanged: _onPageChanged,
         onTap: () => setState(() => _overlay = !_overlay),
-        onEndReached: _nextBook,
+        endPage: _chapterEnd(),
       );
     } else {
       body = _PagedReader(
@@ -230,6 +230,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         onCenterTap: () => setState(() => _overlay = !_overlay),
         onPastEnd: _nextBook,
         onBeforeStart: _prevBook,
+        endPage: _chapterEnd(),
       );
     }
 
@@ -243,6 +244,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
   }
+
+  Widget _chapterEnd() => _ChapterEndPage(
+    finished: _book,
+    next: _hasNext ? widget.books[_index + 1] : null,
+    onNext: _nextBook,
+    onExit: () => Navigator.maybePop(context),
+  );
 
   List<Widget> _buildOverlay(BuildContext context) {
     final pages = _pages;
@@ -358,6 +366,102 @@ class _ReaderScreenState extends State<ReaderScreen> {
 }
 
 // ---------------------------------------------------------------------------
+// Fin de capítulo
+// ---------------------------------------------------------------------------
+
+/// Página negra entre capítulos: indica cuál ha terminado y cuál viene.
+/// Pasar página otra vez abre el siguiente; así se puede salir sin empezarlo.
+class _ChapterEndPage extends StatelessWidget {
+  final KomgaBook finished;
+  final KomgaBook? next;
+  final VoidCallback onNext;
+  final VoidCallback onExit;
+
+  const _ChapterEndPage({required this.finished, required this.next, required this.onNext, required this.onExit});
+
+  @override
+  Widget build(BuildContext context) {
+    final next = this.next;
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ShaderMask(
+                  shaderCallback: (r) => Kofu.accentGradient.createShader(r),
+                  child: const Icon(Icons.check_circle_rounded, size: 64, color: Colors.white),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Capítulo terminado',
+                  style: TextStyle(color: Kofu.muted, fontSize: 13, letterSpacing: 1.2, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  finished.title,
+                  textAlign: TextAlign.center,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800, height: 1.2),
+                ),
+                const SizedBox(height: 32),
+                Container(height: 1, width: 80, color: Kofu.outline),
+                const SizedBox(height: 32),
+                if (next != null) ...[
+                  const Text('Siguiente', style: TextStyle(color: Kofu.muted, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  Text(
+                    next.title,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text('Pasa página para empezarlo', style: TextStyle(color: Kofu.muted, fontSize: 12)),
+                ] else
+                  const Text(
+                    'Era el último de la serie',
+                    style: TextStyle(color: Colors.white70, fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                const SizedBox(height: 28),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: onExit,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Kofu.outline),
+                      ),
+                      icon: const Icon(Icons.close_rounded),
+                      label: const Text('Salir'),
+                    ),
+                    if (next != null)
+                      FilledButton.icon(
+                        onPressed: onNext,
+                        icon: const Icon(Icons.skip_next_rounded),
+                        label: const Text('Siguiente'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Modo páginas
 // ---------------------------------------------------------------------------
 
@@ -370,6 +474,7 @@ class _PagedReader extends StatefulWidget {
   final VoidCallback onCenterTap;
   final VoidCallback onPastEnd;
   final VoidCallback onBeforeStart;
+  final Widget endPage; // página de fin de capítulo, tras la última
 
   const _PagedReader({
     super.key,
@@ -381,6 +486,7 @@ class _PagedReader extends StatefulWidget {
     required this.onCenterTap,
     required this.onPastEnd,
     required this.onBeforeStart,
+    required this.endPage,
   });
 
   @override
@@ -402,7 +508,8 @@ class _PagedReaderState extends State<_PagedReader> {
   }
 
   void _next() {
-    if (_current >= widget.pages.length - 1) {
+    // Índice pages.length = página de fin de capítulo; pasar de ella abre el siguiente.
+    if (_current >= widget.pages.length) {
       widget.onPastEnd();
     } else {
       _controller.jumpToPage(_current + 1);
@@ -468,12 +575,14 @@ class _PagedReaderState extends State<_PagedReader> {
               controller: _controller,
               reverse: widget.rtl,
               physics: _zoomed ? const NeverScrollableScrollPhysics() : const PageScrollPhysics(),
-              itemCount: widget.pages.length,
-              onPageChanged: (i) => widget.onPageChanged(i + 1),
-              itemBuilder: (context, i) => _ZoomablePage(
-                image: widget.image(widget.pages[i].number),
-                onZoomChanged: (z) => setState(() => _zoomed = z),
-              ),
+              itemCount: widget.pages.length + 1,
+              onPageChanged: (i) => widget.onPageChanged(i < widget.pages.length ? i + 1 : widget.pages.length),
+              itemBuilder: (context, i) => i == widget.pages.length
+                  ? widget.endPage
+                  : _ZoomablePage(
+                      image: widget.image(widget.pages[i].number),
+                      onZoomChanged: (z) => setState(() => _zoomed = z),
+                    ),
             ),
           ),
         ),
@@ -539,7 +648,7 @@ class _VerticalReader extends StatefulWidget {
   final int startPage;
   final ValueChanged<int> onPageChanged;
   final VoidCallback onTap;
-  final VoidCallback onEndReached;
+  final Widget endPage; // fin de capítulo, al final del scroll
 
   const _VerticalReader({
     super.key,
@@ -548,7 +657,7 @@ class _VerticalReader extends StatefulWidget {
     required this.startPage,
     required this.onPageChanged,
     required this.onTap,
-    required this.onEndReached,
+    required this.endPage,
   });
 
   @override
@@ -605,16 +714,7 @@ class _VerticalReaderState extends State<_VerticalReader> {
                 itemCount: widget.pages.length + 1,
                 itemBuilder: (context, i) {
                   if (i == widget.pages.length) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 48),
-                      child: Center(
-                        child: FilledButton.icon(
-                          onPressed: widget.onEndReached,
-                          icon: const Icon(Icons.skip_next),
-                          label: const Text('Siguiente libro'),
-                        ),
-                      ),
-                    );
+                    return SizedBox(height: MediaQuery.sizeOf(context).height * 0.8, child: widget.endPage);
                   }
                   final p = widget.pages[i];
                   return SizedBox(
