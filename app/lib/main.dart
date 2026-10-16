@@ -4,6 +4,7 @@ import 'data/app_scope.dart';
 import 'data/app_state.dart';
 import 'data/cover_cache.dart';
 import 'theme.dart';
+import 'ui/desktop.dart';
 import 'ui/home_screen.dart';
 
 Future<void> main() async {
@@ -12,6 +13,7 @@ Future<void> main() async {
   PaintingBinding.instance.imageCache
     ..maximumSizeBytes = 400 << 20
     ..maximumSize = 300;
+  await initDesktop();
   await CoverCache.init();
   final state = AppState();
   await state.init();
@@ -28,6 +30,7 @@ class KofuApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: Kofu.theme(),
       home: const HomeScreen(),
+      builder: (context, child) => DesktopShortcuts(child: child!),
     );
   }
 }

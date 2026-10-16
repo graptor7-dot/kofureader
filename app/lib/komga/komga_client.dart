@@ -110,6 +110,17 @@ class KomgaClient {
     return p.content.firstOrNull;
   }
 
+  /// Busca libros por título en una biblioteca (útil para doujins/oneshots sueltos).
+  Future<List<KomgaBook>> searchBooks({required String libraryId, required String search, int size = 20}) async {
+    final json = await _get('/books', {
+      'library_id': libraryId,
+      'search': search,
+      'size': size,
+      'sort': 'metadata.title,asc',
+    });
+    return KomgaPage.fromJson(json as Map<String, dynamic>, KomgaBook.fromJson).content;
+  }
+
   /// Libros empezados, los leídos más recientemente primero.
   Future<List<KomgaBook>> inProgressBooks({int size = 20}) async {
     final json = await _get('/books', {

@@ -235,7 +235,27 @@ class AppState extends ChangeNotifier {
 
   // ---- Bibliotecas ocultas (se sincroniza entre dispositivos) ----
 
-  bool isLibraryHidden(String sourceId, String libraryId) => data.pref('hiddenlib:$sourceId:$libraryId') == '1';
+  /// Oculta si está desactivada en Ajustes, o si es privada y el modo privado la esconde.
+  bool isLibraryHidden(String sourceId, String libraryId) =>
+      data.pref('hiddenlib:$sourceId:$libraryId') == '1' || (isLibraryPrivate(sourceId, libraryId) && privateHidden);
+
+  /// Si el usuario la desactivó en Ajustes (independiente del modo privado).
+  bool isLibraryDisabled(String sourceId, String libraryId) => data.pref('hiddenlib:$sourceId:$libraryId') == '1';
+
+  // ---- Modo privado rápido ----
+
+  /// Bibliotecas marcadas como privadas (se sincroniza).
+  bool isLibraryPrivate(String sourceId, String libraryId) => data.pref('privatelib:$sourceId:$libraryId') == '1';
+
+  void setLibraryPrivate(String sourceId, String libraryId, bool private) =>
+      data.setPref('privatelib:$sourceId:$libraryId', private ? '1' : null);
+
+  bool get hasPrivateLibraries => data.prefKeys.any((k) => k.startsWith('privatelib:') && data.pref(k) == '1');
+
+  /// Si las bibliotecas privadas están escondidas en este dispositivo (no se sincroniza).
+  bool get privateHidden => data.localPref('private_hidden') == '1';
+
+  void setPrivateHidden(bool hidden) => data.setLocalPref('private_hidden', hidden ? '1' : null);
 
   void setLibraryHidden(String sourceId, String libraryId, bool hidden) =>
       data.setPref('hiddenlib:$sourceId:$libraryId', hidden ? '1' : null);

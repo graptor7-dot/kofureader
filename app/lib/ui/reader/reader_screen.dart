@@ -15,6 +15,7 @@ import '../../komga/komga_client.dart';
 import '../../komga/models.dart';
 import '../../theme.dart';
 import '../widgets/cover_card.dart';
+import '../desktop.dart';
 import '../widgets/list_sheets.dart';
 
 /// Lector de un libro, con paso al siguiente/anterior de la misma lista.
@@ -240,13 +241,99 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
     }
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(child: body),
-          if (_overlay) ..._buildOverlay(context),
-        ],
+    // Filtro nocturno (de este dispositivo): tono cálido y oscurecer.
+    final data = AppScope.of(context).data;
+    final warm = double.tryParse(data.localPref('night_warm') ?? '') ?? 0;
+    final dim = double.tryParse(data.localPref('night_dim') ?? '') ?? 0;
+    if (warm > 0) {
+      body = ColorFiltered(
+        colorFilter: ColorFilter.mode(Color.lerp(Colors.white, const Color(0xFFFFA64D), warm)!, BlendMode.multiply),
+        child: body,
+      );
+    }
+
+    return CallbackShortcuts(
+      bindings: {const SingleActivator(LogicalKeyboardKey.escape): _onEscape},
+      child: Focus(
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
+            children: [
+              Positioned.fill(child: body),
+              if (dim > 0)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: ColoredBox(color: Colors.black.withValues(alpha: dim)),
+                  ),
+                ),
+              if (_overlay) ..._buildOverlay(context),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Esc: primero sale de la pantalla completa; si no lo está, cierra el lector.
+  Future<void> _onEscape() async {
+    if (await isFullScreen()) {
+      await setFullScreen(false);
+    } else if (mounted) {
+      Navigator.maybePop(context);
+    }
+  }
+
+  Future<void> _showNightFilter() async {
+    final data = AppScope.read(context).data;
+    await showModalBottomSheet(
+      context: context,
+      barrierColor: Colors.transparent, // para ver el efecto mientras se ajusta
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          double value(String key) => double.tryParse(data.localPref(key) ?? '') ?? 0;
+          Widget slider(String key, String label, IconData icon, double max) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Icon(icon, color: Kofu.muted),
+                const SizedBox(width: 12),
+                SizedBox(width: 90, child: Text(label)),
+                Expanded(
+                  child: Slider(
+                    value: value(key).clamp(0, max),
+                    max: max,
+                    onChanged: (v) {
+                      data.setLocalPref(key, v <= 0.01 ? null : v.toStringAsFixed(2));
+                      setSheet(() {});
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const ListTile(
+                  title: Text('Filtro nocturno', style: TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text('Solo en este dispositivo', style: TextStyle(color: Kofu.muted)),
+                ),
+                slider('night_warm', 'Tono cálido', Icons.wb_twilight_rounded, 1),
+                slider('night_dim', 'Oscurecer', Icons.brightness_4_rounded, 0.8),
+                TextButton(
+                  onPressed: () {
+                    data.setLocalPref('night_warm', null);
+                    data.setLocalPref('night_dim', null);
+                    setSheet(() {});
+                  },
+                  child: const Text('Quitar filtro'),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -311,6 +398,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onPressed: () => showAddToListSheet(context, [_book.snapshot(widget.source.id)]),
                   icon: const Icon(Icons.playlist_add_rounded, color: Colors.white),
                 ),
+                IconButton(
+                  tooltip: 'Filtro nocturno',
+                  onPressed: _showNightFilter,
+                  icon: const Icon(Icons.nightlight_round, color: Colors.white),
+                ),
+                if (isDesktop)
+                  IconButton(
+                    tooltip: 'Pantalla completa (F11)',
+                    onPressed: toggleFullScreen,
+                    icon: const Icon(Icons.fullscreen_rounded, color: Colors.white),
+                  ),
                 if (_mode != ReadingMode.vertical && _isLandscape)
                   IconButton(
                     tooltip: _spreadsEnabled ? 'Ver de una en una' : 'Ver a doble página',
@@ -564,6 +662,14 @@ class _PagedReaderState extends State<_PagedReader> {
   int get _current => (_controller.hasClients ? _controller.page?.round() : null) ?? _viewOf(widget.startPage - 1);
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     _focus.dispose();
@@ -772,10 +878,40 @@ class _VerticalReaderState extends State<_VerticalReader> {
     widget.onPageChanged(page);
   }
 
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
   @override
   void dispose() {
     _scroll?.dispose();
+    _focus.dispose();
     super.dispose();
+  }
+
+  /// Teclado: flechas para avanzar poco, espacio/AvPág para casi una pantalla.
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    final scroll = _scroll;
+    if (scroll == null || !scroll.hasClients) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    final viewport = scroll.position.viewportDimension;
+    final double delta = switch (event.logicalKey) {
+      LogicalKeyboardKey.arrowDown => viewport * 0.3,
+      LogicalKeyboardKey.arrowUp => -viewport * 0.3,
+      LogicalKeyboardKey.space || LogicalKeyboardKey.pageDown => viewport * 0.85,
+      LogicalKeyboardKey.pageUp => -viewport * 0.85,
+      _ => 0,
+    };
+    if (delta == 0) return KeyEventResult.ignored;
+    final target = (scroll.offset + delta).clamp(0.0, scroll.position.maxScrollExtent);
+    scroll.animateTo(target, duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
+    return KeyEventResult.handled;
   }
 
   @override
@@ -784,25 +920,29 @@ class _VerticalReaderState extends State<_VerticalReader> {
       builder: (context, constraints) {
         final width = constraints.maxWidth.clamp(0.0, _maxWidth);
         _layout(width);
-        return GestureDetector(
-          onTap: widget.onTap,
-          child: Center(
-            child: SizedBox(
-              width: width,
-              child: ListView.builder(
-                controller: _scroll,
-                scrollCacheExtent: const ScrollCacheExtent.pixels(3000),
-                itemCount: widget.pages.length + 1,
-                itemBuilder: (context, i) {
-                  if (i == widget.pages.length) {
-                    return SizedBox(height: MediaQuery.sizeOf(context).height * 0.8, child: widget.endPage);
-                  }
-                  final p = widget.pages[i];
-                  return SizedBox(
-                    height: width / _ratio(p),
-                    child: KomgaImage.provider(widget.image(p.number), fit: BoxFit.fill, fade: false),
-                  );
-                },
+        return Focus(
+          focusNode: _focus,
+          onKeyEvent: _onKey,
+          child: GestureDetector(
+            onTap: widget.onTap,
+            child: Center(
+              child: SizedBox(
+                width: width,
+                child: ListView.builder(
+                  controller: _scroll,
+                  scrollCacheExtent: const ScrollCacheExtent.pixels(3000),
+                  itemCount: widget.pages.length + 1,
+                  itemBuilder: (context, i) {
+                    if (i == widget.pages.length) {
+                      return SizedBox(height: MediaQuery.sizeOf(context).height * 0.8, child: widget.endPage);
+                    }
+                    final p = widget.pages[i];
+                    return SizedBox(
+                      height: width / _ratio(p),
+                      child: KomgaImage.provider(widget.image(p.number), fit: BoxFit.fill, fade: false),
+                    );
+                  },
+                ),
               ),
             ),
           ),

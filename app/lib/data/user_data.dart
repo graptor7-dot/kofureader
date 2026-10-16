@@ -154,6 +154,9 @@ class UserData extends ChangeNotifier {
   /// Estado local de la sincronización (no se sincroniza).
   final Map<String, dynamic> syncMeta = {};
 
+  /// Preferencias solo de este dispositivo (no se sincronizan).
+  final Map<String, String> _local = {};
+
   /// True mientras se aplican cambios recibidos del servidor de sincronización.
   bool applyingRemote = false;
 
@@ -188,6 +191,7 @@ class UserData extends ChangeNotifier {
           _sources[rec.source.id] = rec;
         }
         syncMeta.addAll((j['sync'] as Map<String, dynamic>? ?? {}));
+        _local.addAll((j['local'] as Map<String, dynamic>? ?? {}).cast<String, String>());
       } catch (e) {
         debugPrint('No se pudo leer kofu_data.json: $e');
       }
@@ -368,6 +372,7 @@ class UserData extends ChangeNotifier {
       'prefs': _prefs.map((k, v) => MapEntry(k, {'value': v.value, 'updatedAt': v.updatedAt})),
       'sources': _sources.values.map((s) => s.toJson()).toList(),
       'sync': syncMeta,
+      'local': _local,
     });
     final tmp = File('${file.path}.tmp');
     await tmp.writeAsString(json, flush: true);
@@ -458,6 +463,23 @@ class UserData extends ChangeNotifier {
     }
     addAll(favoritesId, [s]);
     return true;
+  }
+
+  /// Claves de las preferencias sincronizables con valor.
+  Iterable<String> get prefKeys => _prefs.entries.where((e) => e.value.value != null).map((e) => e.key);
+
+  // ---- Preferencias de este dispositivo ----
+
+  String? localPref(String key) => _local[key];
+
+  void setLocalPref(String key, String? value) {
+    if (value == null) {
+      _local.remove(key);
+    } else {
+      _local[key] = value;
+    }
+    notifyListeners();
+    saveSoon();
   }
 
   // ---- Preferencias sincronizables ----

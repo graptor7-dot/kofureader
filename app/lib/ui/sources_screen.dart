@@ -127,23 +127,47 @@ class _LibrariesCardState extends State<_LibrariesCard> {
               )
             else
               for (final e in entries)
-                SwitchListTile(
-                  secondary: Icon(
-                    state.isLibraryHidden(e.source.id, e.library.id)
-                        ? Icons.visibility_off_rounded
-                        : Icons.visibility_rounded,
-                    color: state.sourceColor(e.source.id),
-                  ),
-                  title: Text(e.library.name, style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Text(e.source.name, style: const TextStyle(color: Kofu.muted)),
-                  value: !state.isLibraryHidden(e.source.id, e.library.id),
-                  onChanged: (visible) => state.setLibraryHidden(e.source.id, e.library.id, !visible),
+                Builder(
+                  builder: (context) {
+                    final disabled = state.isLibraryDisabled(e.source.id, e.library.id);
+                    final private = state.isLibraryPrivate(e.source.id, e.library.id);
+                    return ListTile(
+                      leading: Icon(
+                        disabled ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                        color: state.sourceColor(e.source.id),
+                      ),
+                      title: Text(e.library.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                      subtitle: Text(
+                        private ? '${e.source.name} · Privada' : e.source.name,
+                        style: const TextStyle(color: Kofu.muted),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: private ? 'Quitar de privadas' : 'Marcar como privada',
+                            onPressed: () => state.setLibraryPrivate(e.source.id, e.library.id, !private),
+                            icon: Icon(
+                              private ? Icons.lock_rounded : Icons.lock_open_rounded,
+                              color: private ? Kofu.accent : Kofu.muted,
+                            ),
+                          ),
+                          Switch(
+                            value: !disabled,
+                            onChanged: (visible) => state.setLibraryHidden(e.source.id, e.library.id, !visible),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 4, 16, 14),
               child: Text(
                 'Las bibliotecas desactivadas desaparecen de todas partes (inicio, listas, favoritos, '
-                'descargas y aleatorio) en todos tus dispositivos hasta que las vuelvas a activar.',
+                'descargas y aleatorio) en todos tus dispositivos hasta que las vuelvas a activar.\n'
+                'Las marcadas con 🔒 se esconden o muestran todas a la vez con el candado del inicio '
+                '(solo en ese dispositivo).',
                 style: TextStyle(color: Kofu.muted, fontSize: 12),
               ),
             ),

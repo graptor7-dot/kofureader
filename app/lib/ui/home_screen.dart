@@ -9,6 +9,7 @@ import 'downloads_screen.dart';
 import 'library_screen.dart';
 import 'list_screen.dart';
 import 'navigation.dart';
+import 'search_screen.dart';
 import 'sources_screen.dart';
 import 'widgets/cover_card.dart';
 import 'widgets/list_sheets.dart';
@@ -227,6 +228,38 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       actions: [
+        if (AppScope.of(context).hasPrivateLibraries)
+          Builder(
+            builder: (context) {
+              final state = AppScope.of(context);
+              final hidden = state.privateHidden;
+              return IconButton(
+                tooltip: hidden ? 'Mostrar bibliotecas privadas' : 'Ocultar bibliotecas privadas',
+                onPressed: () {
+                  state.setPrivateHidden(!hidden);
+                  showToast(
+                    context,
+                    hidden ? 'Bibliotecas privadas visibles' : 'Bibliotecas privadas ocultas',
+                    icon: hidden ? Icons.lock_open_rounded : Icons.lock_rounded,
+                  );
+                },
+                icon: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
+                  child: Icon(
+                    hidden ? Icons.lock_rounded : Icons.lock_open_rounded,
+                    key: ValueKey(hidden),
+                    color: hidden ? Kofu.accent : null,
+                  ),
+                ),
+              );
+            },
+          ),
+        IconButton(
+          tooltip: 'Buscar',
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen())),
+          icon: const Icon(Icons.search_rounded),
+        ),
         IconButton(tooltip: 'Ajustes', onPressed: _openSources, icon: const Icon(Icons.settings_rounded)),
         const SizedBox(width: 8),
       ],
