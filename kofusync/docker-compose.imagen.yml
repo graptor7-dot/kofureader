@@ -1,0 +1,17 @@
+# Usa la imagen que publica GitHub (no hace falta compilar). Vale para SSH, Portainer o el NAS.
+# El token va en un fichero .env junto a este (KOFUSYNC_TOKEN=...).
+services:
+  kofusync:
+    image: ghcr.io/graptor7-dot/kofusync:latest
+    container_name: kofusync
+    restart: unless-stopped
+    environment:
+      - KOFUSYNC_TOKEN=${KOFUSYNC_TOKEN}
+    volumes:
+      - kofusync-data:/data
+    ports:
+      # No abras este puerto en el router: se accede por Tailscale o desde casa.
+      - "49200:8080"
+
+volumes:
+  kofusync-data:
