@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../data/app_scope.dart';
 import '../../data/app_state.dart';
@@ -47,6 +48,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // Que la pantalla no se apague mientras se lee.
+    WakelockPlus.enable().catchError((_) {});
     _openBook(_index);
   }
 
@@ -54,6 +57,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   void dispose() {
     _flushProgress();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    WakelockPlus.disable().catchError((_) {});
     super.dispose();
   }
 
@@ -220,12 +224,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
         endPage: _chapterEnd(),
       );
     } else {
+      final spreads = _useSpreads;
       body = _PagedReader(
-        key: ValueKey('p$_loadId${_mode.name}'),
+        key: ValueKey('p$_loadId${_mode.name}$spreads'),
         image: _image,
         pages: _pages!,
         startPage: _page,
         rtl: _mode == ReadingMode.pagedRtl,
+        spreads: spreads,
         onPageChanged: _onPageChanged,
         onCenterTap: () => setState(() => _overlay = !_overlay),
         onPastEnd: _nextBook,
@@ -244,6 +250,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
       ),
     );
   }
+
+  bool get _isLandscape {
+    final size = MediaQuery.sizeOf(context);
+    return size.width > size.height;
+  }
+
+  /// Preferencia (sincronizada) de doble página; activada salvo que se desactive.
+  bool get _spreadsEnabled => AppScope.read(context).data.pref('doublepage') != '0';
+
+  /// Doble página: en horizontal, en modo páginas y si está activada.
+  bool get _useSpreads => _mode != ReadingMode.vertical && _isLandscape && _spreadsEnabled;
 
   Widget _chapterEnd() => _ChapterEndPage(
     finished: _book,
@@ -294,6 +311,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onPressed: () => showAddToListSheet(context, [_book.snapshot(widget.source.id)]),
                   icon: const Icon(Icons.playlist_add_rounded, color: Colors.white),
                 ),
+                if (_mode != ReadingMode.vertical && _isLandscape)
+                  IconButton(
+                    tooltip: _spreadsEnabled ? 'Ver de una en una' : 'Ver a doble página',
+                    onPressed: () {
+                      AppScope.read(context).data.setPref('doublepage', _spreadsEnabled ? '0' : null);
+                      setState(() {
+                        _startPage = _page;
+                        _loadId++;
+                      });
+                    },
+                    icon: Icon(
+                      _spreadsEnabled ? Icons.auto_stories_rounded : Icons.crop_portrait_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
                 PopupMenuButton<ReadingMode>(
                   tooltip: 'Modo de lectura (solo ahora)',
                   icon: const Icon(Icons.chrome_reader_mode_outlined, color: Colors.white),
@@ -470,6 +502,7 @@ class _PagedReader extends StatefulWidget {
   final List<KomgaPageInfo> pages;
   final int startPage;
   final bool rtl;
+  final bool spreads; // doble página (iPad/PC en horizontal)
   final ValueChanged<int> onPageChanged;
   final VoidCallback onCenterTap;
   final VoidCallback onPastEnd;
@@ -482,6 +515,7 @@ class _PagedReader extends StatefulWidget {
     required this.pages,
     required this.startPage,
     required this.rtl,
+    required this.spreads,
     required this.onPageChanged,
     required this.onCenterTap,
     required this.onPastEnd,
@@ -493,12 +527,41 @@ class _PagedReader extends StatefulWidget {
   State<_PagedReader> createState() => _PagedReaderState();
 }
 
+/// Agrupa las páginas en "vistas": una página, o dos en modo doble página.
+/// La portada va sola, las páginas anchas (dobles ya unidas) también.
+List<List<int>> buildSpreads(List<KomgaPageInfo> pages, {required bool spreads}) {
+  if (!spreads) {
+    return [
+      for (var i = 0; i < pages.length; i++) [i],
+    ];
+  }
+  bool wide(int i) => (pages[i].aspectRatio ?? 0.7) > 1;
+  final views = <List<int>>[];
+  var i = 0;
+  while (i < pages.length) {
+    if (i == 0 || wide(i) || i + 1 >= pages.length || wide(i + 1)) {
+      views.add([i]);
+      i++;
+    } else {
+      views.add([i, i + 1]);
+      i += 2;
+    }
+  }
+  return views;
+}
+
 class _PagedReaderState extends State<_PagedReader> {
-  late final _controller = PageController(initialPage: widget.startPage - 1);
+  late final List<List<int>> _views = buildSpreads(widget.pages, spreads: widget.spreads);
+  late final _controller = PageController(initialPage: _viewOf(widget.startPage - 1));
   final _focus = FocusNode();
   bool _zoomed = false;
 
-  int get _current => (_controller.hasClients ? _controller.page?.round() : null) ?? widget.startPage - 1;
+  int _viewOf(int pageIndex) {
+    final v = _views.indexWhere((view) => view.contains(pageIndex));
+    return v < 0 ? 0 : v;
+  }
+
+  int get _current => (_controller.hasClients ? _controller.page?.round() : null) ?? _viewOf(widget.startPage - 1);
 
   @override
   void dispose() {
@@ -508,8 +571,8 @@ class _PagedReaderState extends State<_PagedReader> {
   }
 
   void _next() {
-    // Índice pages.length = página de fin de capítulo; pasar de ella abre el siguiente.
-    if (_current >= widget.pages.length) {
+    // Índice _views.length = página de fin de capítulo; pasar de ella abre el siguiente.
+    if (_current >= _views.length) {
       widget.onPastEnd();
     } else {
       _controller.jumpToPage(_current + 1);
@@ -545,6 +608,26 @@ class _PagedReaderState extends State<_PagedReader> {
     return KeyEventResult.handled;
   }
 
+  Widget _page(int index, Alignment alignment) => KomgaImage.provider(
+    widget.image(widget.pages[index].number),
+    fit: BoxFit.contain,
+    alignment: alignment,
+    fade: false,
+  );
+
+  Widget _view(List<int> view) {
+    if (view.length == 1) return SizedBox.expand(child: _page(view.first, Alignment.center));
+    // En manga (RTL) la primera página del par va a la derecha.
+    final first = _page(view[0], widget.rtl ? Alignment.centerLeft : Alignment.centerRight);
+    final second = _page(view[1], widget.rtl ? Alignment.centerRight : Alignment.centerLeft);
+    return Row(
+      children: [
+        Expanded(child: widget.rtl ? second : first),
+        Expanded(child: widget.rtl ? first : second),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Focus(
@@ -575,14 +658,12 @@ class _PagedReaderState extends State<_PagedReader> {
               controller: _controller,
               reverse: widget.rtl,
               physics: _zoomed ? const NeverScrollableScrollPhysics() : const PageScrollPhysics(),
-              itemCount: widget.pages.length + 1,
-              onPageChanged: (i) => widget.onPageChanged(i < widget.pages.length ? i + 1 : widget.pages.length),
-              itemBuilder: (context, i) => i == widget.pages.length
+              itemCount: _views.length + 1,
+              // Se informa la última página visible de la vista.
+              onPageChanged: (v) => widget.onPageChanged(v < _views.length ? _views[v].last + 1 : widget.pages.length),
+              itemBuilder: (context, v) => v == _views.length
                   ? widget.endPage
-                  : _ZoomablePage(
-                      image: widget.image(widget.pages[i].number),
-                      onZoomChanged: (z) => setState(() => _zoomed = z),
-                    ),
+                  : _ZoomablePage(onZoomChanged: (z) => setState(() => _zoomed = z), child: _view(_views[v])),
             ),
           ),
         ),
@@ -592,10 +673,10 @@ class _PagedReaderState extends State<_PagedReader> {
 }
 
 class _ZoomablePage extends StatefulWidget {
-  final ImageProvider image;
+  final Widget child;
   final ValueChanged<bool> onZoomChanged;
 
-  const _ZoomablePage({required this.image, required this.onZoomChanged});
+  const _ZoomablePage({required this.child, required this.onZoomChanged});
 
   @override
   State<_ZoomablePage> createState() => _ZoomablePageState();
@@ -632,7 +713,7 @@ class _ZoomablePageState extends State<_ZoomablePage> {
         panEnabled: _zoomed,
         maxScale: 5,
         onInteractionEnd: (_) => _update(),
-        child: SizedBox.expand(child: KomgaImage.provider(widget.image, fit: BoxFit.contain, fade: false)),
+        child: SizedBox.expand(child: widget.child),
       ),
     );
   }

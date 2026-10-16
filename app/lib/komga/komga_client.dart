@@ -158,6 +158,20 @@ class KomgaClient {
     _check(res);
   }
 
+  Future<void> _send(String method, String path) async {
+    final req = http.Request(method, _uri(path))..headers.addAll(authHeaders);
+    final res = await http.Response.fromStream(await _http.send(req).timeout(_timeout));
+    _check(res);
+  }
+
+  /// Marca un libro como leído o no leído.
+  Future<void> setBookRead(String bookId, bool read) =>
+      read ? markProgress(bookId, page: 0, completed: true) : _send('DELETE', '/books/$bookId/read-progress');
+
+  /// Marca todos los libros de una serie como leídos o no leídos.
+  Future<void> setSeriesRead(String seriesId, bool read) =>
+      _send(read ? 'POST' : 'DELETE', '/series/$seriesId/read-progress');
+
   /// Descarga binaria (páginas, portadas). Devuelve los bytes y el tipo MIME.
   Future<(List<int>, String?)> getBytes(String url) async {
     final res = await _http.get(Uri.parse(url), headers: authHeaders).timeout(const Duration(seconds: 60));

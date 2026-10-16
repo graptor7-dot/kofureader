@@ -210,6 +210,50 @@ class _SeriesScreenState extends State<SeriesScreen> {
     }
   }
 
+  /// Marca libros como leídos o no leídos en Komga.
+  Future<void> _setRead(List<KomgaBook> books, bool read) async {
+    final state = AppScope.read(context);
+    final client = state.client(_sourceId);
+    _selection.clear();
+    try {
+      await Future.wait(books.map((b) => client.setBookRead(b.id, read)));
+      for (final b in books) {
+        state.downloads.discardPendingProgress(_sourceId, b.id);
+      }
+      if (mounted) {
+        showToast(
+          context,
+          '${books.length} marcado${books.length == 1 ? '' : 's'} como ${read ? 'leído' : 'no leído'}${books.length == 1 ? '' : 's'}',
+          icon: read ? Icons.done_all_rounded : Icons.remove_done_rounded,
+        );
+      }
+    } catch (e) {
+      if (mounted) showToast(context, '$e', icon: Icons.error_outline);
+    }
+    await _load();
+  }
+
+  /// Marca la serie entera como leída o no leída.
+  Future<void> _setSeriesRead(bool read) async {
+    final state = AppScope.read(context);
+    try {
+      await state.client(_sourceId).setSeriesRead(widget.seriesId, read);
+      for (final b in _books ?? const <KomgaBook>[]) {
+        state.downloads.discardPendingProgress(_sourceId, b.id);
+      }
+      if (mounted) {
+        showToast(
+          context,
+          read ? 'Serie marcada como leída' : 'Serie marcada como no leída',
+          icon: read ? Icons.done_all_rounded : Icons.remove_done_rounded,
+        );
+      }
+    } catch (e) {
+      if (mounted) showToast(context, '$e', icon: Icons.error_outline);
+    }
+    await _load();
+  }
+
   void _favoriteSelected() {
     final data = AppScope.read(context).data;
     data.addAll(data.favorites.id, _selection.values.map((b) => b.snapshot(_sourceId)));
@@ -257,6 +301,16 @@ class _SeriesScreenState extends State<SeriesScreen> {
                         _selection.clear();
                       },
                       icon: const Icon(Icons.download_rounded),
+                    ),
+                  if (!_offline)
+                    PopupMenuButton<bool>(
+                      tooltip: 'Leído / no leído',
+                      icon: const Icon(Icons.done_all_rounded),
+                      onSelected: (read) => _setRead(_selection.values, read),
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: true, child: Text('Marcar como leídos')),
+                        PopupMenuItem(value: false, child: Text('Marcar como no leídos')),
+                      ],
                     ),
                 ],
               )
@@ -383,6 +437,21 @@ class _SeriesScreenState extends State<SeriesScreen> {
           onPressed: _pickMode,
           icon: Icon(Icons.chrome_reader_mode_rounded, color: override != null ? Kofu.accent : null),
         ),
+        if (!_offline)
+          PopupMenuButton<bool>(
+            tooltip: 'Más opciones',
+            onSelected: _setSeriesRead,
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: true,
+                child: ListTile(leading: Icon(Icons.done_all_rounded), title: Text('Marcar serie como leída')),
+              ),
+              PopupMenuItem(
+                value: false,
+                child: ListTile(leading: Icon(Icons.remove_done_rounded), title: Text('Marcar serie como no leída')),
+              ),
+            ],
+          ),
         const SizedBox(width: 8),
       ],
       flexibleSpace: FlexibleSpaceBar(

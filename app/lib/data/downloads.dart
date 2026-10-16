@@ -328,6 +328,11 @@ class DownloadManager extends ChangeNotifier {
     _savePending();
   }
 
+  /// Olvida el progreso pendiente (p. ej. al marcar el libro como leído/no leído a mano).
+  void discardPendingProgress(String sourceId, String bookId) {
+    if (_pendingProgress.remove(keyOf(sourceId, bookId)) != null) _savePending();
+  }
+
   /// Quita el pendiente si sigue siendo el de [page] (no uno más nuevo).
   void clearPendingProgress(String sourceId, String bookId, int page) {
     final key = keyOf(sourceId, bookId);

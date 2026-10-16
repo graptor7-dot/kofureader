@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../data/cover_cache.dart';
 import '../../theme.dart';
 
 /// Imagen (de Komga o de un fichero descargado) con aparición suave.
@@ -9,7 +10,7 @@ class KomgaImage extends StatelessWidget {
   final Alignment alignment;
   final bool fade; // aparición suave (en el lector se desactiva: ya va precargada)
 
-  /// Imagen de Komga con cabeceras de autenticación.
+  /// Portada de Komga con cabeceras de autenticación, guardada en disco ([CoverCache]).
   KomgaImage({
     super.key,
     required String url,
@@ -17,7 +18,7 @@ class KomgaImage extends StatelessWidget {
     this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
     this.fade = true,
-  }) : image = NetworkImage(url, headers: headers);
+  }) : image = CachedCoverImage(url, headers: headers);
 
   const KomgaImage.provider(
     this.image, {

@@ -3,10 +3,12 @@ import 'package:uuid/uuid.dart';
 
 import '../data/app_scope.dart';
 import '../data/app_state.dart';
+import '../data/cover_cache.dart';
 import '../data/source.dart';
 import '../data/sync_service.dart';
 import '../komga/komga_client.dart';
 import '../theme.dart';
+import 'downloads_screen.dart' show formatBytes;
 import 'widgets/update_widgets.dart';
 
 /// Ajustes: servidores Komga y sincronización.
@@ -57,6 +59,8 @@ class SourcesScreen extends StatelessWidget {
           const _SyncCard(),
           const _Header('Aplicación'),
           const UpdateSettingsCard(),
+          const SizedBox(height: 12),
+          const _CoverCacheCard(),
         ],
       ),
     );
@@ -146,6 +150,44 @@ class _LibrariesCardState extends State<_LibrariesCard> {
           ],
         );
       },
+    );
+  }
+}
+
+/// Espacio que ocupan las portadas guardadas y botón para vaciarlas.
+class _CoverCacheCard extends StatefulWidget {
+  const _CoverCacheCard();
+
+  @override
+  State<_CoverCacheCard> createState() => _CoverCacheCardState();
+}
+
+class _CoverCacheCardState extends State<_CoverCacheCard> {
+  late Future<int> _size = CoverCache.sizeBytes();
+
+  @override
+  Widget build(BuildContext context) {
+    return _Card(
+      children: [
+        FutureBuilder<int>(
+          future: _size,
+          builder: (context, snap) => ListTile(
+            leading: const Icon(Icons.image_rounded, color: Kofu.muted),
+            title: const Text('Portadas guardadas'),
+            subtitle: Text(
+              snap.hasData ? formatBytes(snap.data!) : 'Calculando…',
+              style: const TextStyle(color: Kofu.muted),
+            ),
+            trailing: TextButton(
+              onPressed: () async {
+                await CoverCache.clear();
+                setState(() => _size = CoverCache.sizeBytes());
+              },
+              child: const Text('Vaciar'),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

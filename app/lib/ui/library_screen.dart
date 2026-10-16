@@ -165,6 +165,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  /// Marca las series seleccionadas (todos sus libros) como leídas o no leídas en Komga.
+  Future<void> _setSelectedRead(bool read) async {
+    final series = _selection.values;
+    final client = AppScope.read(context).client(_sourceId);
+    _selection.clear();
+    try {
+      await Future.wait(series.map((s) => client.setSeriesRead(s.id, read)));
+      if (mounted) {
+        showToast(
+          context,
+          '${series.length} serie${series.length == 1 ? '' : 's'} marcada${series.length == 1 ? '' : 's'} '
+          'como ${read ? 'leída' : 'no leída'}${series.length == 1 ? '' : 's'}',
+          icon: read ? Icons.done_all_rounded : Icons.remove_done_rounded,
+        );
+      }
+    } catch (e) {
+      if (mounted) showToast(context, '$e', icon: Icons.error_outline);
+    }
+    await _reset();
+  }
+
   void _favoriteSelected() {
     final data = AppScope.read(context).data;
     data.addAll(data.favorites.id, _selection.values.map((s) => s.snapshot(_sourceId)));
@@ -202,6 +223,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     tooltip: 'Añadir a lista',
                     onPressed: _addSelectedToList,
                     icon: const Icon(Icons.playlist_add_rounded),
+                  ),
+                  PopupMenuButton<bool>(
+                    tooltip: 'Leído / no leído',
+                    icon: const Icon(Icons.done_all_rounded),
+                    onSelected: _setSelectedRead,
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: true, child: Text('Marcar series como leídas')),
+                      PopupMenuItem(value: false, child: Text('Marcar series como no leídas')),
+                    ],
                   ),
                 ],
               )

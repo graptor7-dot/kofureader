@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'data/app_scope.dart';
 import 'data/app_state.dart';
+import 'data/cover_cache.dart';
 import 'theme.dart';
 import 'ui/home_screen.dart';
 
@@ -11,6 +12,7 @@ Future<void> main() async {
   PaintingBinding.instance.imageCache
     ..maximumSizeBytes = 400 << 20
     ..maximumSize = 300;
+  await CoverCache.init();
   final state = AppState();
   await state.init();
   runApp(AppScope(state: state, child: const KofuApp()));
