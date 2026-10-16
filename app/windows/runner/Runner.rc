@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.kofu" "\0"
-            VALUE "FileDescription", "kofu_reader" "\0"
+            VALUE "FileDescription", "KofuReader" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "kofu_reader" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.kofu. All rights reserved." "\0"
             VALUE "OriginalFilename", "kofu_reader.exe" "\0"
-            VALUE "ProductName", "kofu_reader" "\0"
+            VALUE "ProductName", "KofuReader" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
