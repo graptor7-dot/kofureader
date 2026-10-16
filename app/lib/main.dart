@@ -7,6 +7,10 @@ import 'ui/home_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Las páginas de manga son grandes: más caché para que las precargadas no se expulsen.
+  PaintingBinding.instance.imageCache
+    ..maximumSizeBytes = 400 << 20
+    ..maximumSize = 300;
   final state = AppState();
   await state.init();
   runApp(AppScope(state: state, child: const KofuApp()));

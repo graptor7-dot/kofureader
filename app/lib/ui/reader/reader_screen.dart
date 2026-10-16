@@ -95,6 +95,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _startPage = _page;
         _loadId++;
       });
+      _precache(_page, behind: 1);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
@@ -103,10 +104,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
   /// Libro abierto desde disco (null = se lee de Komga).
   DownloadedBook? _local;
 
-  ImageProvider _image(int page) {
+  /// Página a tamaño original (de disco o de Komga).
+  ImageProvider _source(int page) {
     final local = _local;
     if (local != null) return FileImage(AppScope.read(context).downloads.pageFile(local, page));
     return NetworkImage(_client.pageUrl(_book.id, page), headers: _client.authHeaders);
+  }
+
+  /// Página descodificada al tamaño de la pantalla (x1.5 para tener margen al hacer zoom).
+  /// Descodificar a tamaño completo ocupa ~20 MB por página y llena la caché enseguida.
+  ImageProvider _image(int page) {
+    final size = MediaQuery.sizeOf(context);
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    if (_mode == ReadingMode.vertical) {
+      final width = (size.width.clamp(0, 800) * dpr * 1.25).round();
+      return ResizeImage(_source(page), width: width, allowUpscaling: false);
+    }
+    return ResizeImage(
+      _source(page),
+      width: (size.width * dpr * 1.5).round(),
+      height: (size.height * dpr * 1.5).round(),
+      policy: ResizeImagePolicy.fit,
+      allowUpscaling: false,
+    );
   }
 
   // ---- Progreso ----
@@ -138,10 +158,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
         .then((_) => downloads.clearPendingProgress(sourceId, bookId, page), onError: (_) {});
   }
 
-  void _precache(int page) {
-    final pages = _pages!;
-    for (var p = page + 1; p <= page + 3 && p <= pages.length; p++) {
-      precacheImage(_image(pages[p - 1].number), context);
+  /// Precarga las siguientes páginas (y [behind] anteriores, por si se vuelve atrás).
+  void _precache(int page, {int behind = 1}) {
+    final pages = _pages;
+    if (pages == null || !mounted) return;
+    const ahead = 5;
+    for (var p = page; p <= page + ahead && p <= pages.length; p++) {
+      precacheImage(_image(pages[p - 1].number), context, onError: (_, _) {});
+    }
+    for (var p = page - 1; p >= page - behind && p >= 1; p--) {
+      precacheImage(_image(pages[p - 1].number), context, onError: (_, _) {});
     }
   }
 
@@ -497,7 +523,7 @@ class _ZoomablePageState extends State<_ZoomablePage> {
         panEnabled: _zoomed,
         maxScale: 5,
         onInteractionEnd: (_) => _update(),
-        child: SizedBox.expand(child: KomgaImage.provider(widget.image, fit: BoxFit.contain)),
+        child: SizedBox.expand(child: KomgaImage.provider(widget.image, fit: BoxFit.contain, fade: false)),
       ),
     );
   }
@@ -593,7 +619,7 @@ class _VerticalReaderState extends State<_VerticalReader> {
                   final p = widget.pages[i];
                   return SizedBox(
                     height: width / _ratio(p),
-                    child: KomgaImage.provider(widget.image(p.number), fit: BoxFit.fill),
+                    child: KomgaImage.provider(widget.image(p.number), fit: BoxFit.fill, fade: false),
                   );
                 },
               ),

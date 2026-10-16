@@ -227,6 +227,25 @@ class AppState extends ChangeNotifier {
     return all.take(20).toList();
   }
 
+  // ---- Bibliotecas ocultas (se sincroniza entre dispositivos) ----
+
+  bool isLibraryHidden(String sourceId, String libraryId) => data.pref('hiddenlib:$sourceId:$libraryId') == '1';
+
+  void setLibraryHidden(String sourceId, String libraryId, bool hidden) =>
+      data.setPref('hiddenlib:$sourceId:$libraryId', hidden ? '1' : null);
+
+  /// False si el elemento es de una biblioteca oculta.
+  bool isVisible(ItemSnapshot item) => !isLibraryHidden(item.ref.sourceId, item.libraryId);
+
+  /// Elementos visibles de una lista (sin los de bibliotecas ocultas).
+  List<ListItem> visibleItemsOf(String listId) => data.itemsOf(listId).where((i) => isVisible(i.item)).toList();
+
+  /// Favoritos de una biblioteca concreta.
+  List<ListItem> favoritesOf(String sourceId, String libraryId) => data
+      .itemsOf(UserData.favoritesId)
+      .where((i) => i.item.ref.sourceId == sourceId && i.item.libraryId == libraryId)
+      .toList();
+
   // ---- Modo de lectura (se sincroniza con los datos del usuario) ----
 
   static ReadingMode _guessMode(String libraryName) {

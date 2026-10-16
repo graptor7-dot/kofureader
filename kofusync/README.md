@@ -16,7 +16,7 @@ por ejemplo junto a Komga. Cualquier forma vale:
 
 - **Por SSH desde Windows** (PowerShell):
   ```bash
-  scp -r "D:\Proyecto KofuReader\kofusync" usuario@100.71.106.123:~/kofusync
+  scp -r "D:\Proyecto KofuReader\kofusync" usuario@100.64.0.10:~/kofusync
   ```
 - **Por la red**: si el servidor es un NAS, arrástrala a una carpeta compartida (por ejemplo `docker/kofusync`).
 
@@ -41,7 +41,7 @@ docker compose logs
 Deberías ver `KofuSync escuchando en el puerto 8080`. Y desde el PC (con Tailscale activo):
 
 ```bash
-curl http://100.71.106.123:49200/health
+curl http://100.64.0.10:49200/health
 ```
 
 Debe responder `{"ok":true,"version":1}`.
@@ -55,7 +55,7 @@ y despliégalo. Es exactamente lo mismo que `docker compose up -d --build`.
 
 En la app: **Ajustes → Sincronización → Configurar**
 
-- **URL:** `http://100.71.106.123:49200`
+- **URL:** `http://100.64.0.10:49200`
 - **Token:** el valor de `KOFUSYNC_TOKEN` del fichero `.env`
 
 Pulsa *Probar y guardar*. A partir de ahí sincroniza sola: al abrir la app, al volver a ella,

@@ -88,7 +88,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final downloads = state.downloads;
-    final all = downloads.all;
+    // Las descargas de bibliotecas ocultas no se muestran.
+    final all = downloads.all.where((b) => !state.isLibraryHidden(b.sourceId, b.libraryId)).toList();
     // Agrupar por serie.
     final groups = <String, List<DownloadedBook>>{};
     for (final b in all) {

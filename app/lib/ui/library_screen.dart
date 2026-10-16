@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import '../data/app_scope.dart';
 import '../data/app_state.dart';
 import '../data/snapshots.dart';
+import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
+import 'list_screen.dart';
 import 'navigation.dart';
 import 'widgets/cover_card.dart';
 import 'widgets/list_sheets.dart';
@@ -215,6 +217,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   pinned: true,
                   expandedHeight: 120,
                   actions: [
+                    IconButton(
+                      tooltip: 'Favoritos de esta biblioteca',
+                      icon: const Icon(Icons.favorite_rounded, color: Kofu.accent),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ListScreen(
+                            listId: UserData.favoritesId,
+                            library: (
+                              sourceId: _sourceId,
+                              libraryId: widget.entry.library.id,
+                              name: widget.entry.library.name,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                     PopupMenuButton<SeriesSort>(
                       tooltip: 'Ordenar',
                       icon: const Icon(Icons.sort_rounded),

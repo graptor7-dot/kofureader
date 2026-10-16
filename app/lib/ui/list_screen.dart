@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/app_scope.dart';
+import '../data/app_state.dart';
 import '../data/user_data.dart';
 import '../theme.dart';
 import 'navigation.dart';
@@ -8,11 +9,15 @@ import 'widgets/cover_card.dart';
 import 'widgets/list_sheets.dart';
 import 'widgets/selection.dart';
 
+/// Biblioteca a la que se limita una lista (se usa para los Favoritos de cada biblioteca).
+typedef LibraryScope = ({String sourceId, String libraryId, String name});
+
 /// Contenido de una lista propia o de Favoritos.
 class ListScreen extends StatefulWidget {
   final String listId;
+  final LibraryScope? library;
 
-  const ListScreen({super.key, required this.listId});
+  const ListScreen({super.key, required this.listId, this.library});
 
   @override
   State<ListScreen> createState() => _ListScreenState();
@@ -35,11 +40,20 @@ class _ListScreenState extends State<ListScreen> {
     super.dispose();
   }
 
-  List<ListItem> _visible(UserData data) => data
-      .itemsOf(widget.listId)
-      .where((i) => _kind == null || i.item.ref.kind == _kind)
-      .where((i) => _sourceFilter == null || i.item.ref.sourceId == _sourceFilter)
-      .toList();
+  /// Elementos de la lista, sin bibliotecas ocultas y limitados a [ListScreen.library] si la hay.
+  List<ListItem> _all(AppState state) {
+    final lib = widget.library;
+    return state
+        .visibleItemsOf(widget.listId)
+        .where((i) => lib == null || (i.item.ref.sourceId == lib.sourceId && i.item.libraryId == lib.libraryId))
+        .toList();
+  }
+
+  List<ListItem> _visible(AppState state) =>
+      _all(state)
+          .where((i) => _kind == null || i.item.ref.kind == _kind)
+          .where((i) => _sourceFilter == null || i.item.ref.sourceId == _sourceFilter)
+          .toList();
 
   Future<void> _random(List<ListItem> visible) async {
     final pool = _selection.active ? _selection.values : visible.map((i) => i.item).toList();
@@ -92,8 +106,8 @@ class _ListScreenState extends State<ListScreen> {
     final data = state.data;
     final list = data.list(widget.listId);
     if (list == null) return const Scaffold();
-    final all = data.itemsOf(widget.listId);
-    final visible = _visible(data);
+    final all = _all(state);
+    final visible = _visible(state);
     final sourceIds = {for (final i in all) i.item.ref.sourceId};
 
     return PopScope(
@@ -141,7 +155,12 @@ class _ListScreenState extends State<ListScreen> {
                 ],
                 flexibleSpace: FlexibleSpaceBar(
                   titlePadding: const EdgeInsetsDirectional.only(start: 56, bottom: 14, end: 56),
-                  title: Text(list.name, style: const TextStyle(fontWeight: FontWeight.w800)),
+                  title: Text(
+                    widget.library == null ? list.name : '${list.name} · ${widget.library!.name}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
                   background: Stack(
                     fit: StackFit.expand,
                     children: [

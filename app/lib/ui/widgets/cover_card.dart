@@ -7,6 +7,7 @@ class KomgaImage extends StatelessWidget {
   final ImageProvider image;
   final BoxFit fit;
   final Alignment alignment;
+  final bool fade; // aparición suave (en el lector se desactiva: ya va precargada)
 
   /// Imagen de Komga con cabeceras de autenticación.
   KomgaImage({
@@ -15,9 +16,16 @@ class KomgaImage extends StatelessWidget {
     required Map<String, String> headers,
     this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
+    this.fade = true,
   }) : image = NetworkImage(url, headers: headers);
 
-  const KomgaImage.provider(this.image, {super.key, this.fit = BoxFit.cover, this.alignment = Alignment.center});
+  const KomgaImage.provider(
+    this.image, {
+    super.key,
+    this.fit = BoxFit.cover,
+    this.alignment = Alignment.center,
+    this.fade = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +35,7 @@ class KomgaImage extends StatelessWidget {
       alignment: alignment,
       gaplessPlayback: true,
       frameBuilder: (context, child, frame, wasSync) {
-        if (wasSync) return child;
+        if (wasSync || !fade) return child;
         return AnimatedOpacity(
           opacity: frame == null ? 0 : 1,
           duration: const Duration(milliseconds: 300),

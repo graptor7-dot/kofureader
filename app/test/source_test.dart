@@ -9,7 +9,7 @@ void main() {
     });
 
     test('conserva puerto y esquema http', () {
-      expect(Source.normalizeUrl('http://100.71.106.123:49158/dashboard'), 'http://100.71.106.123:49158');
+      expect(Source.normalizeUrl('http://100.64.0.10:49158/dashboard'), 'http://100.64.0.10:49158');
     });
 
     test('añade https si falta el esquema', () {

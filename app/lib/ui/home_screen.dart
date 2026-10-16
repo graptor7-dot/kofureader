@@ -27,6 +27,12 @@ class _ListPick extends _HomePick {
   _ListPick(this.list);
 }
 
+/// Los Favoritos de una biblioteca.
+class _FavPick extends _HomePick {
+  final LibraryEntry entry;
+  _FavPick(this.entry);
+}
+
 /// Pantalla inicial: seguir leyendo, bibliotecas de todos los servidores y listas.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -97,18 +103,23 @@ class _HomeScreenState extends State<HomeScreen> {
             .catchError((_) => <KomgaSeries>[]),
   );
 
+  /// Bibliotecas cargadas que no están ocultas.
+  List<LibraryEntry> _visibleLibraries(List<SourceLibraries> groups) {
+    final state = AppScope.read(context);
+    return [
+      for (final g in groups)
+        for (final e in g.libraries)
+          if (!state.isLibraryHidden(e.source.id, e.library.id)) e,
+    ];
+  }
+
   void _openSources() => Navigator.push(context, MaterialPageRoute(builder: (_) => const SourcesScreen()));
 
   // ---- Aleatorio ----
 
   Future<void> _random(List<SourceLibraries> groups) async {
     final state = AppScope.read(context);
-    final picks = _selection.active
-        ? _selection.values
-        : [
-            for (final g in groups)
-              for (final e in g.libraries) _LibraryPick(e),
-          ];
+    final picks = _selection.active ? _selection.values : [for (final e in _visibleLibraries(groups)) _LibraryPick(e)];
     if (picks.isEmpty) return;
     setState(() => _randomBusy = true);
     try {
@@ -119,7 +130,8 @@ class _HomeScreenState extends State<HomeScreen> {
             return switch (p) {
               _LibraryPick(:final entry) =>
                 await state.client(entry.source.id).seriesCount(libraryId: entry.library.id),
-              _ListPick(:final list) => state.data.countOf(list.id),
+              _ListPick(:final list) => state.visibleItemsOf(list.id).length,
+              _FavPick(:final entry) => state.favoritesOf(entry.source.id, entry.library.id).length,
             };
           } catch (_) {
             return 0; // servidor sin conexión: no participa
@@ -143,7 +155,9 @@ class _HomeScreenState extends State<HomeScreen> {
           final series = await state.client(entry.source.id).seriesAt(r, libraryId: entry.library.id);
           if (series != null && mounted) await openSeries(context, entry.source, series.id, series: series);
         case _ListPick(:final list):
-          await openSnapshot(context, state.data.itemsOf(list.id)[r].item);
+          await openSnapshot(context, state.visibleItemsOf(list.id)[r].item);
+        case _FavPick(:final entry):
+          await openSnapshot(context, state.favoritesOf(entry.source.id, entry.library.id)[r].item);
       }
       _refreshContinue();
     } catch (e) {
@@ -187,7 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   else
                     _librariesGrid(groups),
                   _sectionTitle('Listas'),
-                  _listsGrid(state.data),
+                  _listsGrid(state, groups == null ? const [] : _visibleLibraries(groups)),
                   const SliverToBoxAdapter(child: SizedBox(height: 120)),
                 ],
               ),
@@ -229,7 +243,8 @@ class _HomeScreenState extends State<HomeScreen> {
       child: FutureBuilder<List<SourcedBook>>(
         future: _continue,
         builder: (context, snap) {
-          final books = snap.data;
+          final state = AppScope.of(context);
+          final books = snap.data?.where((b) => !state.isLibraryHidden(b.source.id, b.book.libraryId)).toList();
           if (books == null || books.isEmpty) return const SizedBox.shrink();
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -267,7 +282,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _librariesGrid(List<SourceLibraries> groups) {
     final state = AppScope.read(context);
     final offline = groups.where((g) => g.error != null).toList();
-    final entries = [for (final g in groups) ...g.libraries];
+    final entries = _visibleLibraries(groups);
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       sliver: SliverMainAxisGroup(
@@ -316,8 +331,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _listsGrid(UserData data) {
-    final lists = [data.favorites, ...data.customLists];
+  Widget _listsGrid(AppState state, List<LibraryEntry> libraries) {
+    final data = state.data;
+    final lists = data.customLists;
+    // Un Favoritos por biblioteca visible, antes que las listas propias.
+    final favCount = libraries.length;
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       sliver: SliverGrid.builder(
@@ -327,8 +345,36 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisSpacing: 16,
           mainAxisSpacing: 16,
         ),
-        itemCount: lists.length + 2,
-        itemBuilder: (context, i) {
+        itemCount: favCount + lists.length + 2,
+        itemBuilder: (context, index) {
+          if (index < favCount) {
+            final e = libraries[index];
+            final key = 'fav:${e.key}';
+            return _ListCard(
+              title: 'Favoritos',
+              favorite: true,
+              caption: '${e.library.name} · ${e.source.name}',
+              tint: state.sourceColor(e.source.id),
+              items: state.favoritesOf(e.source.id, e.library.id),
+              selected: _selection.contains(key),
+              onTap: _selection.active
+                  ? () => _selection.toggle(key, _FavPick(e))
+                  : () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => ListScreen(
+                            listId: UserData.favoritesId,
+                            library: (sourceId: e.source.id, libraryId: e.library.id, name: e.library.name),
+                          ),
+                        ),
+                      );
+                      _refreshContinue();
+                    },
+              onLongPress: () => _selection.toggle(key, _FavPick(e)),
+            );
+          }
+          final i = index - favCount;
           if (i == lists.length) {
             return _DownloadsCard(
               onTap: () async {
@@ -348,8 +394,8 @@ class _HomeScreenState extends State<HomeScreen> {
           final list = lists[i];
           final key = 'list:${list.id}';
           return _ListCard(
-            list: list,
-            items: data.itemsOf(list.id),
+            title: list.name,
+            items: state.visibleItemsOf(list.id),
             selected: _selection.contains(key),
             onTap: _selection.active
                 ? () => _selection.toggle(key, _ListPick(list))
@@ -621,18 +667,24 @@ class _LibraryCard extends StatelessWidget {
 }
 
 class _ListCard extends StatelessWidget {
-  final UserList list;
+  final String title;
+  final bool favorite;
+  final String? caption; // p. ej. la biblioteca de un Favoritos
+  final Color? tint;
   final List<ListItem> items;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
   const _ListCard({
-    required this.list,
+    required this.title,
     required this.items,
     required this.selected,
     required this.onTap,
     required this.onLongPress,
+    this.favorite = false,
+    this.caption,
+    this.tint,
   });
 
   @override
@@ -646,8 +698,16 @@ class _ListCard extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (list.isFavorites)
-            const DecoratedBox(decoration: BoxDecoration(gradient: Kofu.accentGradient))
+          if (favorite)
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Kofu.accent, Color.lerp(Kofu.accent2, tint ?? Kofu.accent2, 0.35)!],
+                ),
+              ),
+            )
           else
             const ColoredBox(color: Kofu.surface),
           // Portadas apiladas a la derecha.
@@ -679,14 +739,28 @@ class _ListCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(
-                  list.isFavorites ? Icons.favorite_rounded : Icons.collections_bookmark_rounded,
-                  color: list.isFavorites ? Colors.white : Kofu.accent,
+                  favorite ? Icons.favorite_rounded : Icons.collections_bookmark_rounded,
+                  color: favorite ? Colors.white : Kofu.accent,
                 ),
                 const Spacer(),
+                if (caption != null)
+                  SizedBox(
+                    width: 150,
+                    child: Text(
+                      caption!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: favorite ? Colors.white : Kofu.muted,
+                      ),
+                    ),
+                  ),
                 SizedBox(
                   width: 150,
                   child: Text(
-                    list.name,
+                    title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, height: 1.15),
@@ -695,7 +769,7 @@ class _ListCard extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   '${items.length} elemento${items.length == 1 ? '' : 's'}',
-                  style: TextStyle(fontSize: 12, color: list.isFavorites ? Colors.white70 : Kofu.muted),
+                  style: TextStyle(fontSize: 12, color: favorite ? Colors.white70 : Kofu.muted),
                 ),
               ],
             ),
@@ -713,8 +787,11 @@ class _DownloadsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final downloads = AppScope.of(context).downloads;
-    final count = downloads.all.length;
+    final state = AppScope.of(context);
+    final downloads = state.downloads;
+    final visible = downloads.all.where((b) => !state.isLibraryHidden(b.sourceId, b.libraryId)).toList();
+    final count = visible.length;
+    final bytes = visible.fold(0, (a, b) => a + b.sizeBytes);
     final queued = downloads.queuedCount;
     final radius = BorderRadius.circular(Kofu.radius + 4);
     return Material(
@@ -752,7 +829,7 @@ class _DownloadsCard extends StatelessWidget {
                         ? '$count libros · $queued en cola'
                         : count == 0
                         ? 'Para leer sin conexión'
-                        : '$count libro${count == 1 ? '' : 's'} · ${formatBytes(downloads.totalBytes)}',
+                        : '$count libro${count == 1 ? '' : 's'} · ${formatBytes(bytes)}',
                     style: const TextStyle(fontSize: 12, color: Kofu.muted),
                   ),
                 ],

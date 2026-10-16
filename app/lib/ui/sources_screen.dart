@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/app_scope.dart';
+import '../data/app_state.dart';
 import '../data/source.dart';
 import '../data/sync_service.dart';
 import '../komga/komga_client.dart';
@@ -49,6 +50,8 @@ class SourcesScreen extends StatelessWidget {
               ),
             ],
           ),
+          const _Header('Bibliotecas'),
+          const _LibrariesCard(),
           const _Header('Sincronización'),
           const _SyncCard(),
         ],
@@ -84,6 +87,64 @@ class _Card extends StatelessWidget {
     clipBehavior: Clip.antiAlias,
     child: Column(children: children),
   );
+}
+
+/// Interruptores para mostrar u ocultar cada biblioteca (se sincroniza entre dispositivos).
+class _LibrariesCard extends StatefulWidget {
+  const _LibrariesCard();
+
+  @override
+  State<_LibrariesCard> createState() => _LibrariesCardState();
+}
+
+class _LibrariesCardState extends State<_LibrariesCard> {
+  late final Future<List<SourceLibraries>> _future = AppScope.read(context).loadAllLibraries();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppScope.of(context);
+    return FutureBuilder<List<SourceLibraries>>(
+      future: _future,
+      builder: (context, snap) {
+        final entries = [for (final g in snap.data ?? const <SourceLibraries>[]) ...g.libraries];
+        return _Card(
+          children: [
+            if (!snap.hasData)
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (entries.isEmpty)
+              const ListTile(
+                title: Text('No hay bibliotecas disponibles', style: TextStyle(color: Kofu.muted)),
+              )
+            else
+              for (final e in entries)
+                SwitchListTile(
+                  secondary: Icon(
+                    state.isLibraryHidden(e.source.id, e.library.id)
+                        ? Icons.visibility_off_rounded
+                        : Icons.visibility_rounded,
+                    color: state.sourceColor(e.source.id),
+                  ),
+                  title: Text(e.library.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  subtitle: Text(e.source.name, style: const TextStyle(color: Kofu.muted)),
+                  value: !state.isLibraryHidden(e.source.id, e.library.id),
+                  onChanged: (visible) => state.setLibraryHidden(e.source.id, e.library.id, !visible),
+                ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 4, 16, 14),
+              child: Text(
+                'Las bibliotecas desactivadas desaparecen de todas partes (inicio, listas, favoritos, '
+                'descargas y aleatorio) en todos tus dispositivos hasta que las vuelvas a activar.',
+                style: TextStyle(color: Kofu.muted, fontSize: 12),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _SyncCard extends StatelessWidget {
