@@ -6,8 +6,6 @@ name: Android
 
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
 
 jobs:
   build:
@@ -60,8 +58,3 @@ jobs:
           path: app/build/app/outputs/flutter-apk/KofuReader.apk
           retention-days: 30
 
-      - name: Publicar en Releases (solo con tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: app/build/app/outputs/flutter-apk/KofuReader.apk

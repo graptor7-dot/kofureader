@@ -7,6 +7,7 @@ import '../data/source.dart';
 import '../data/sync_service.dart';
 import '../komga/komga_client.dart';
 import '../theme.dart';
+import 'widgets/update_widgets.dart';
 
 /// Ajustes: servidores Komga y sincronización.
 class SourcesScreen extends StatelessWidget {
@@ -54,6 +55,8 @@ class SourcesScreen extends StatelessWidget {
           const _LibrariesCard(),
           const _Header('Sincronización'),
           const _SyncCard(),
+          const _Header('Aplicación'),
+          const UpdateSettingsCard(),
         ],
       ),
     );

@@ -13,6 +13,7 @@ import 'sources_screen.dart';
 import 'widgets/cover_card.dart';
 import 'widgets/list_sheets.dart';
 import 'widgets/selection.dart';
+import 'widgets/update_widgets.dart';
 
 /// Algo seleccionable en el inicio: una biblioteca o una lista.
 sealed class _HomePick {}
@@ -189,6 +190,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: CustomScrollView(
                 slivers: [
                   if (!_selection.active) _header(),
+                  const SliverToBoxAdapter(child: UpdateBanner()),
                   _continueSection(),
                   _sectionTitle('Bibliotecas'),
                   if (groups == null)

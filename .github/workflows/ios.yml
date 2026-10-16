@@ -4,8 +4,6 @@ name: iOS (sin firmar)
 
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
 
 jobs:
   build:
@@ -40,8 +38,3 @@ jobs:
           path: app/build/ipa/KofuReader.ipa
           retention-days: 30
 
-      - name: Publicar en Releases (solo con tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: app/build/ipa/KofuReader.ipa

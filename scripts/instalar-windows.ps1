@@ -17,7 +17,12 @@ flutter build windows --release
 Pop-Location
 if ($LASTEXITCODE -ne 0) { throw 'La compilación ha fallado' }
 
-Get-Process kofu_reader -ErrorAction SilentlyContinue | Stop-Process -Force
+$running = Get-Process kofu_reader -ErrorAction SilentlyContinue
+if ($running) {
+    $running | Stop-Process -Force
+    $running | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500  # Windows tarda un instante en liberar las DLL
+}
 if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item -Recurse -Force (Join-Path $app 'build\windows\x64\runner\Release\*') $dest

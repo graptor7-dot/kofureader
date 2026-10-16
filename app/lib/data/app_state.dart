@@ -11,6 +11,7 @@ import '../theme.dart';
 import 'downloads.dart';
 import 'source.dart';
 import 'sync_service.dart';
+import 'updater.dart';
 import 'user_data.dart';
 
 enum ReadingMode {
@@ -79,6 +80,10 @@ class AppState extends ChangeNotifier {
     await sync.init();
     await downloads.init();
     downloads.addListener(notifyListeners);
+    await updater.init();
+    updater.addListener(notifyListeners);
+    // Buscar actualizaciones sin retrasar el arranque.
+    Timer(const Duration(seconds: 3), updater.check);
     // Progreso leído sin conexión: enviarlo en cuanto se pueda.
     unawaited(flushPendingProgress());
     _pendingTimer = Timer.periodic(const Duration(minutes: 2), (_) => flushPendingProgress());
@@ -86,6 +91,7 @@ class AppState extends ChangeNotifier {
   }
 
   final DownloadManager downloads = DownloadManager();
+  final Updater updater = Updater();
   Timer? _pendingTimer;
   AppLifecycleListener? _lifecycle;
 
