@@ -91,7 +91,12 @@ Future<void> _handle(HttpRequest req) async {
   try {
     final path = req.uri.path;
     if (req.method == 'GET' && path == '/health') {
-      return _json(req, 200, {'ok': true, 'version': 1});
+      return _json(req, 200, {'ok': true, 'version': 2, 'remote': true});
+    }
+    if (path == '/remote' && WebSocketTransformer.isUpgradeRequest(req)) {
+      if (!_authorized(req)) return _json(req, 401, {'error': 'unauthorized'});
+      final socket = await WebSocketTransformer.upgrade(req);
+      return _remote(socket);
     }
     if (req.method == 'POST' && path == '/sync') {
       if (!_authorized(req)) return _json(req, 401, {'error': 'unauthorized'});
@@ -144,4 +149,86 @@ void _json(HttpRequest req, int status, Object body) {
     ..headers.contentType = ContentType.json
     ..write(jsonEncode(body));
   req.response.close();
+}
+
+// ---------------------------------------------------------------------------
+// Modo mando: el móvil controla el lector de otro dispositivo.
+//
+// Cada dispositivo abre un WebSocket en /remote y se presenta:
+//   {type: hello, deviceId, name, role: screen|remote}
+// Las pantallas (lector abierto) envían su estado: {type: state, ...}
+// Los mandos reciben la lista: {type: screens, screens: [{deviceId, name, ...estado}]}
+// y envían órdenes: {type: command, to, cmd, ...} o {type: attach, to}
+// que se reenvían a esa pantalla tal cual (con "from").
+// ---------------------------------------------------------------------------
+
+class _Peer {
+  final WebSocket socket;
+  String deviceId = '';
+  String name = '';
+  String role = '';
+  Map<String, dynamic> state = {};
+
+  _Peer(this.socket);
+}
+
+final _peers = <_Peer>{};
+
+void _remote(WebSocket socket) {
+  socket.pingInterval = const Duration(seconds: 20);
+  final peer = _Peer(socket);
+  _peers.add(peer);
+  socket.listen(
+    (data) {
+      try {
+        final msg = (jsonDecode(data as String) as Map).cast<String, dynamic>();
+        _onRemoteMessage(peer, msg);
+      } catch (_) {}
+    },
+    onDone: () {
+      _peers.remove(peer);
+      if (peer.role == 'screen') _broadcastScreens();
+    },
+    onError: (_) {},
+    cancelOnError: true,
+  );
+}
+
+void _onRemoteMessage(_Peer peer, Map<String, dynamic> msg) {
+  switch (msg['type']) {
+    case 'hello':
+      peer
+        ..deviceId = '${msg['deviceId']}'
+        ..name = '${msg['name']}'
+        ..role = '${msg['role']}';
+      // Un dispositivo reconectado sustituye a su conexión anterior con el mismo papel.
+      for (final old in _peers.where((p) => p != peer && p.deviceId == peer.deviceId && p.role == peer.role).toList()) {
+        _peers.remove(old);
+        old.socket.close();
+      }
+      if (peer.role == 'remote') {
+        _sendScreens(peer);
+      } else {
+        _broadcastScreens();
+      }
+    case 'state' when peer.role == 'screen':
+      peer.state = (msg['state'] as Map? ?? {}).cast<String, dynamic>();
+      _broadcastScreens();
+    case 'command' || 'attach' when peer.role == 'remote':
+      final target = _peers.where((p) => p.role == 'screen' && p.deviceId == msg['to']).firstOrNull;
+      target?.socket.add(jsonEncode({...msg, 'from': peer.deviceId, 'fromName': peer.name}));
+  }
+}
+
+List<Map<String, dynamic>> _screenList() => [
+  for (final p in _peers)
+    if (p.role == 'screen') {'deviceId': p.deviceId, 'name': p.name, ...p.state},
+];
+
+void _sendScreens(_Peer remote) => remote.socket.add(jsonEncode({'type': 'screens', 'screens': _screenList()}));
+
+void _broadcastScreens() {
+  for (final p in _peers.where((p) => p.role == 'remote').toList()) {
+    _sendScreens(p);
+  }
 }

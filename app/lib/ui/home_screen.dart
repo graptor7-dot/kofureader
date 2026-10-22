@@ -9,6 +9,8 @@ import 'downloads_screen.dart';
 import 'library_screen.dart';
 import 'list_screen.dart';
 import 'navigation.dart';
+import 'desktop.dart' show isDesktop;
+import 'remote_screen.dart';
 import 'search_screen.dart';
 import 'sources_screen.dart';
 import 'widgets/cover_card.dart';
@@ -254,6 +256,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               );
             },
+          ),
+        if (AppScope.of(context).sync.configured && !isDesktop)
+          IconButton(
+            tooltip: 'Modo mando',
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RemoteScreen())),
+            icon: const Icon(Icons.settings_remote_rounded),
           ),
         IconButton(
           tooltip: 'Buscar',

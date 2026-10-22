@@ -15,7 +15,9 @@ import '../../komga/komga_client.dart';
 import '../../komga/models.dart';
 import '../../theme.dart';
 import '../widgets/cover_card.dart';
+import '../../data/remote_link.dart';
 import '../desktop.dart';
+import '../widgets/selection.dart' show showToast;
 import '../widgets/list_sheets.dart';
 
 /// Lector de un libro, con paso al siguiente/anterior de la misma lista.
@@ -43,7 +45,67 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Timer? _saveTimer;
   int? _pendingSave;
 
+  /// Modo mando: este lector se anuncia como pantalla y obedece al móvil.
+  RemoteLink? _remote;
+
+  // Claves para llamar a las vistas desde el mando; cambian cuando se recrea la vista.
+  GlobalKey<_PagedReaderState> _pagedKey = GlobalKey();
+  GlobalKey<_VerticalReaderState> _verticalKey = GlobalKey();
+  String? _viewSignature;
+
   KomgaBook get _book => widget.books[_index];
+
+  void _refreshKeys(String signature) {
+    if (signature == _viewSignature) return;
+    _viewSignature = signature;
+    _pagedKey = GlobalKey();
+    _verticalKey = GlobalKey();
+  }
+
+  /// Publica en el mando qué se está leyendo.
+  void _publishState() {
+    final pages = _pages;
+    _remote?.publishState({
+      'title': _book.title,
+      'series': _book.seriesTitle,
+      'page': _page,
+      'total': pages?.length ?? 0,
+      'mode': _mode.name,
+      'hasNext': _hasNext,
+      'hasPrev': _hasPrev,
+    });
+  }
+
+  /// Órdenes que llegan del móvil.
+  void _onRemote(Map<String, dynamic> msg) {
+    if (!mounted) return;
+    if (msg['type'] == 'attach') {
+      showToast(context, 'Mando conectado: ${msg['fromName'] ?? 'móvil'}', icon: Icons.settings_remote_rounded);
+      _publishState();
+      return;
+    }
+    if (msg['type'] != 'command') return;
+    final paged = _pagedKey.currentState;
+    final vertical = _verticalKey.currentState;
+    switch (msg['cmd']) {
+      case 'next':
+        paged != null ? paged._next() : vertical?.scrollByFraction(0.85, animate: true);
+      case 'prev':
+        paged != null ? paged._prev() : vertical?.scrollByFraction(-0.85, animate: true);
+      case 'scroll':
+        vertical?.scrollByFraction((msg['dy'] as num).toDouble());
+      case 'fling':
+        vertical?.fling((msg['v'] as num).toDouble());
+      case 'nextChapter':
+        _nextBook();
+      case 'prevChapter':
+        _prevBook();
+      case 'overlay':
+        setState(() => _overlay = !_overlay);
+      case 'exit':
+        Navigator.maybePop(context);
+    }
+  }
 
   @override
   void initState() {
@@ -51,12 +113,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     // Que la pantalla no se apague mientras se lee.
     WakelockPlus.enable().catchError((_) {});
+    _remote = RemoteLink.create(AppScope.read(context), RemoteRole.screen, onMessage: _onRemote);
     _openBook(_index);
   }
 
   @override
   void dispose() {
     _flushProgress();
+    _remote?.close();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     WakelockPlus.disable().catchError((_) {});
     super.dispose();
@@ -101,6 +165,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _loadId++;
       });
       _precache(_page, behind: 1);
+      _publishState();
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
@@ -144,6 +209,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final isLast = page == _pages!.length;
     _saveTimer = Timer(Duration(milliseconds: isLast ? 0 : 1200), _flushProgress);
     _precache(page);
+    _publishState();
   }
 
   void _flushProgress() {
@@ -215,8 +281,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
         child: Text('Libro sin páginas', style: TextStyle(color: Colors.white)),
       );
     } else if (_mode == ReadingMode.vertical) {
+      _refreshKeys('v$_loadId');
       body = _VerticalReader(
-        key: ValueKey('v$_loadId'),
+        key: _verticalKey,
         image: _image,
         pages: _pages!,
         startPage: _startPage,
@@ -226,8 +293,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
     } else {
       final spreads = _useSpreads;
+      _refreshKeys('p$_loadId${_mode.name}$spreads');
       body = _PagedReader(
-        key: ValueKey('p$_loadId${_mode.name}$spreads'),
+        key: _pagedKey,
         image: _image,
         pages: _pages!,
         startPage: _page,
@@ -893,6 +961,30 @@ class _VerticalReaderState extends State<_VerticalReader> {
     _scroll?.dispose();
     _focus.dispose();
     super.dispose();
+  }
+
+  /// Desplaza una fracción de la altura de la pantalla (mando: trackpad y botones).
+  void scrollByFraction(double fraction, {bool animate = false}) {
+    final scroll = _scroll;
+    if (scroll == null || !scroll.hasClients) return;
+    final target = (scroll.offset + fraction * scroll.position.viewportDimension).clamp(
+      0.0,
+      scroll.position.maxScrollExtent,
+    );
+    if (animate) {
+      scroll.animateTo(target, duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+    } else {
+      scroll.jumpTo(target);
+    }
+  }
+
+  /// Inercia al soltar el dedo en el trackpad: [velocity] en pantallas por segundo.
+  void fling(double velocity) {
+    final scroll = _scroll;
+    if (scroll == null || !scroll.hasClients || velocity.abs() < 0.2) return;
+    final distance = velocity * 0.35 * scroll.position.viewportDimension;
+    final target = (scroll.offset + distance).clamp(0.0, scroll.position.maxScrollExtent);
+    scroll.animateTo(target, duration: const Duration(milliseconds: 450), curve: Curves.decelerate);
   }
 
   /// Teclado: flechas para avanzar poco, espacio/AvPág para casi una pantalla.

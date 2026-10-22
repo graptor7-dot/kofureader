@@ -42,6 +42,9 @@ class SyncService extends ChangeNotifier {
 
   String? get url => data.syncMeta['url'] as String?;
   bool get configured => url != null && _token.isNotEmpty;
+
+  /// Token de KofuSync (lo usa también el modo mando). Null si no está configurado.
+  String? get token => configured ? _token : null;
   bool get syncing => _syncing;
   DateTime? get lastSync {
     final ms = data.syncMeta['lastSync'] as int?;
