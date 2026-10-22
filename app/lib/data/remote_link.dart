@@ -115,6 +115,9 @@ class RemoteLink extends ChangeNotifier {
     _send({'type': 'state', 'state': s});
   }
 
+  /// Mensaje libre (p. ej. emparejar una tele).
+  void sendRaw(Map<String, dynamic> msg) => _send(msg);
+
   /// Mando: avisa a la pantalla de que se ha conectado.
   void attach(String to) => _send({'type': 'attach', 'to': to});
 

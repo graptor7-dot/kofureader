@@ -194,6 +194,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 slivers: [
                   if (!_selection.active) _header(),
                   const SliverToBoxAdapter(child: UpdateBanner()),
+                  if (state.remote.castTarget != null) const SliverToBoxAdapter(child: _CastBanner()),
                   _continueSection(),
                   _sectionTitle('Bibliotecas'),
                   if (groups == null)
@@ -817,6 +818,44 @@ class _ListCard extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Aviso mientras se elige qué leer en la tele: el próximo libro que se abra irá a ella.
+class _CastBanner extends StatelessWidget {
+  const _CastBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final hub = AppScope.of(context).remote;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [Kofu.accent.withValues(alpha: 0.25), Kofu.accent2.withValues(alpha: 0.25)]),
+        borderRadius: BorderRadius.circular(Kofu.radius + 4),
+        border: Border.all(color: Kofu.accent.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.tv_rounded, color: Kofu.accent),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Elige qué leer en la tele', style: TextStyle(fontWeight: FontWeight.w800)),
+                Text(
+                  'Entra en una serie y toca un capítulo (o "Leer"): se abrirá en la tele',
+                  style: TextStyle(fontSize: 12, color: Kofu.muted),
+                ),
+              ],
+            ),
+          ),
+          TextButton(onPressed: hub.cancelChoosing, child: const Text('Cancelar')),
         ],
       ),
     );

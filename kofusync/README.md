@@ -84,3 +84,15 @@ docker compose up -d --build
 
 Todo está en `data/kofusync.json`. Copia ese fichero y listo. Además, cada dispositivo guarda su propia
 copia local, así que si el servidor se pierde, al volver a configurarlo los dispositivos lo rellenan solos.
+
+## Modo tele (navegador de la tele)
+
+KofuSync sirve también una web ligera para leer en la tele, controlada desde el móvil:
+
+1. En el navegador de la tele (por ejemplo Silk en el Fire TV) abre `http://IP-DEL-SERVIDOR:49200/tv`
+   usando la IP del servidor en tu red local. La tele no necesita Tailscale.
+2. Aparece un código de 4 cifras. En el móvil: **Modo mando → Añadir tele** y escríbelo (solo la primera vez).
+3. Elige qué leer en el móvil y se abre en la tele. Pasas páginas con el móvil o con las flechas del mando de la tele.
+
+La tele nunca habla con Komga: el móvil le da al servidor cómo llegar (solo en memoria) y el servidor
+le pasa las páginas. Guarda la página de la tele en favoritos para abrirla rápido.

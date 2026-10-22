@@ -8,7 +8,7 @@ import '../data/snapshots.dart';
 import '../data/source.dart';
 import '../komga/models.dart';
 import '../theme.dart';
-import 'reader/reader_screen.dart';
+import 'navigation.dart' show startReading;
 import 'widgets/cover_card.dart';
 import 'widgets/list_sheets.dart';
 import 'widgets/reading_mode_picker.dart';
@@ -172,12 +172,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
 
   Future<void> _open(KomgaBook book) async {
     final books = _books!;
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ReaderScreen(source: widget.source, books: books, initialIndex: books.indexOf(book)),
-      ),
-    );
+    await startReading(context, widget.source, books, books.indexOf(book));
     if (mounted) _load();
   }
 

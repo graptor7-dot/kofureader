@@ -12,6 +12,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+
+part 'tv.dart';
+part 'tv_page.dart';
 
 const _maxBody = 20 * 1024 * 1024;
 
@@ -33,6 +37,7 @@ Future<void> main() async {
   await dataDir.create(recursive: true);
   _file = File('${dataDir.path}/kofusync.json');
   await _load();
+  await _loadTv(dataDir);
 
   final port = int.tryParse(env['KOFUSYNC_PORT'] ?? '') ?? 8080;
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
@@ -92,6 +97,14 @@ Future<void> _handle(HttpRequest req) async {
     final path = req.uri.path;
     if (req.method == 'GET' && path == '/health') {
       return _json(req, 200, {'ok': true, 'version': 2, 'remote': true});
+    }
+    if (req.method == 'GET' && (path == '/tv' || path == '/tv/')) return _tvHtml(req);
+    if (req.method == 'GET' && path == '/tv/page') return await _tvPage(req);
+    if (path == '/tvws' && WebSocketTransformer.isUpgradeRequest(req)) {
+      final id = req.uri.queryParameters['id'] ?? '';
+      if (id.length < 8 || id.length > 64) return _json(req, 400, {'error': 'bad id'});
+      final socket = await WebSocketTransformer.upgrade(req);
+      return _tvSocket(socket, id, req.uri.queryParameters['s']);
     }
     if (path == '/remote' && WebSocketTransformer.isUpgradeRequest(req)) {
       if (!_authorized(req)) return _json(req, 401, {'error': 'unauthorized'});
@@ -167,6 +180,8 @@ class _Peer {
   String deviceId = '';
   String name = '';
   String role = '';
+  String kind = 'app'; // app o tv
+  String? pairCode; // tele esperando a emparejarse
   Map<String, dynamic> state = {};
 
   _Peer(this.socket);
@@ -216,13 +231,21 @@ void _onRemoteMessage(_Peer peer, Map<String, dynamic> msg) {
       _broadcastScreens();
     case 'command' || 'attach' when peer.role == 'remote':
       final target = _peers.where((p) => p.role == 'screen' && p.deviceId == msg['to']).firstOrNull;
-      target?.socket.add(jsonEncode({...msg, 'from': peer.deviceId, 'fromName': peer.name}));
+      if (target == null) return;
+      final out = {...msg, 'from': peer.deviceId, 'fromName': peer.name};
+      if (target.kind == 'tv' && msg['cmd'] == 'open') {
+        _openOnTv(target, out);
+      } else {
+        target.socket.add(jsonEncode(out));
+      }
+    case 'pair' when peer.role == 'remote':
+      _pairTv(peer, '${msg['code']}');
   }
 }
 
 List<Map<String, dynamic>> _screenList() => [
   for (final p in _peers)
-    if (p.role == 'screen') {'deviceId': p.deviceId, 'name': p.name, ...p.state},
+    if (p.role == 'screen') {'deviceId': p.deviceId, 'name': p.name, 'kind': p.kind, ...p.state},
 ];
 
 void _sendScreens(_Peer remote) => remote.socket.add(jsonEncode({'type': 'screens', 'screens': _screenList()}));

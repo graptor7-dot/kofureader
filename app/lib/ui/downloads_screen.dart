@@ -5,7 +5,7 @@ import '../data/app_state.dart';
 import '../data/downloads.dart';
 import '../komga/models.dart';
 import '../theme.dart';
-import 'reader/reader_screen.dart';
+import 'navigation.dart' show startReading;
 import 'widgets/cover_card.dart';
 import 'widgets/selection.dart';
 
@@ -53,13 +53,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     final downloads = state.downloads;
     final series = downloads.ofSeries(book.sourceId, book.seriesId);
     final books = [for (final b in series) b.toKomgaBook(progress: _progress(downloads, b))];
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) =>
-            ReaderScreen(source: source, books: books, initialIndex: series.indexWhere((b) => b.bookId == book.bookId)),
-      ),
-    );
+    await startReading(context, source, books, series.indexWhere((b) => b.bookId == book.bookId));
   }
 
   void _random(List<DownloadedBook> all) {

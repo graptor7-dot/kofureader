@@ -5,106 +5,123 @@ import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../data/app_scope.dart';
-import '../data/remote_link.dart';
+import '../data/remote_hub.dart';
 import '../theme.dart';
 import 'widgets/selection.dart' show showToast;
 
-/// Una pantalla (dispositivo con el lector abierto) vista desde el mando.
-class _Screen {
-  final String deviceId;
-  final String name;
-  final String title;
-  final String series;
-  final int page;
-  final int total;
-  final String mode;
-  final bool hasNext;
-  final bool hasPrev;
-
-  _Screen(Map<String, dynamic> j)
-    : deviceId = '${j['deviceId']}',
-      name = '${j['name'] ?? 'Pantalla'}',
-      title = '${j['title'] ?? ''}',
-      series = '${j['series'] ?? ''}',
-      page = (j['page'] as num?)?.toInt() ?? 0,
-      total = (j['total'] as num?)?.toInt() ?? 0,
-      mode = '${j['mode'] ?? 'pagedRtl'}',
-      hasNext = j['hasNext'] == true,
-      hasPrev = j['hasPrev'] == true;
-
-  bool get vertical => mode == 'vertical';
-  bool get rtl => mode == 'pagedRtl';
-}
-
-/// Modo mando: el móvil controla el lector abierto en otro dispositivo.
+/// Modo mando: el móvil controla el lector abierto en otro dispositivo o en la tele.
 class RemoteScreen extends StatefulWidget {
-  const RemoteScreen({super.key});
+  /// Pantalla a la que conectarse directamente (p. ej. la tele tras enviarle un libro).
+  final String? focus;
+
+  const RemoteScreen({super.key, this.focus});
 
   @override
   State<RemoteScreen> createState() => _RemoteScreenState();
 }
 
 class _RemoteScreenState extends State<RemoteScreen> {
-  RemoteLink? _link;
-  List<_Screen> _screens = [];
-  bool _received = false;
-  String? _selectedId;
-  String? _ownId;
+  late final RemoteHub _hub = AppScope.read(context).remote;
+  late String? _selectedId = widget.focus;
 
-  _Screen? get _selected => _screens.where((s) => s.deviceId == _selectedId).firstOrNull;
+  RemoteScreenInfo? get _selected => _selectedId == null ? null : _hub.screen(_selectedId!);
 
   @override
   void initState() {
     super.initState();
-    final state = AppScope.read(context);
-    _ownId = deviceId(state);
-    _link = RemoteLink.create(state, RemoteRole.remote, onMessage: _onMessage)?..addListener(_onLinkChanged);
+    _hub.acquire();
+    _hub.addListener(_onHub);
+    if (_selectedId != null) _hub.attach(_selectedId!);
     WakelockPlus.enable().catchError((_) {});
   }
 
   @override
   void dispose() {
-    _link?.removeListener(_onLinkChanged);
-    _link?.close();
+    _hub.removeListener(_onHub);
+    _hub.release();
     WakelockPlus.disable().catchError((_) {});
     super.dispose();
   }
 
-  void _onLinkChanged() {
-    if (mounted) setState(() {});
-  }
+  bool _hadSelected = false;
 
-  void _onMessage(Map<String, dynamic> msg) {
-    if (msg['type'] != 'screens' || !mounted) return;
-    final screens = [for (final s in (msg['screens'] as List).cast<Map>()) _Screen(s.cast<String, dynamic>())]
-        .where((s) => s.deviceId != _ownId)
-        .toList();
-    final hadSelected = _selectedId != null;
+  void _onHub() {
+    if (!mounted) return;
+    final lost = _hadSelected && _selected == null && _hub.received;
+    _hadSelected = _selected != null;
     setState(() {
-      _screens = screens;
-      _received = true;
-      if (_selectedId != null && _selected == null) _selectedId = null;
+      if (lost) _selectedId = null;
     });
-    if (hadSelected && _selectedId == null) {
-      showToast(context, 'Se ha cerrado el lector en la pantalla', icon: Icons.tv_off_rounded);
-    }
+    if (lost) showToast(context, 'La pantalla se ha desconectado', icon: Icons.tv_off_rounded);
   }
 
-  void _connect(_Screen s) {
+  void _connect(RemoteScreenInfo s) {
+    // Una tele sin nada abierto: directamente a elegir qué leer.
+    if (s.isTv && !s.hasBook) {
+      _choose(s.deviceId);
+      return;
+    }
     setState(() => _selectedId = s.deviceId);
-    _link?.attach(s.deviceId);
+    _hub.attach(s.deviceId);
     HapticFeedback.mediumImpact();
   }
 
+  /// Vuelve al inicio para elegir un libro; al tocarlo se abrirá en la tele.
+  void _choose(String tvId) {
+    _hub.startChoosing(tvId);
+    Navigator.popUntil(context, (r) => r.isFirst);
+  }
+
   void _send(String cmd, [Map<String, dynamic> args = const {}]) {
-    final id = _selectedId;
-    if (id != null) _link?.command(id, cmd, args);
+    final s = _selected;
+    if (s == null) return;
+    // En la tele los capítulos los gestiona el móvil (la tele no conoce la serie).
+    if (s.isTv) {
+      final session = _hub.tvSession;
+      final ownsBook = session != null && session.tvId == s.deviceId;
+      if (cmd == 'nextChapter' || (cmd == 'next' && s.atEnd)) {
+        if (ownsBook && session.hasNext) _guard(_hub.tvNextChapter());
+        return;
+      }
+      if (cmd == 'prevChapter') {
+        if (ownsBook && session.hasPrev) _guard(_hub.tvPrevChapter());
+        return;
+      }
+      if (cmd == 'exit') {
+        ownsBook ? _hub.tvClose() : _hub.command(s.deviceId, 'exit');
+        setState(() => _selectedId = null);
+        return;
+      }
+    }
+    _hub.command(s.deviceId, cmd, args);
+  }
+
+  Future<void> _guard(Future<void> f) async {
+    try {
+      await f;
+    } catch (e) {
+      if (mounted) showToast(context, '$e', icon: Icons.error_outline);
+    }
+  }
+
+  Future<void> _pairTv() async {
+    final code = await showDialog<String>(context: context, builder: (_) => const _PairDialog());
+    if (code == null || !mounted) return;
+    final id = await _hub.pairTv(code);
+    if (!mounted) return;
+    if (id == null) {
+      showToast(context, 'Código incorrecto o caducado', icon: Icons.error_outline);
+    } else {
+      showToast(context, 'Tele emparejada', icon: Icons.tv_rounded);
+      _choose(id);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final link = _link;
     final selected = _selected;
+    final session = _hub.tvSession;
+    final tvOwned = selected != null && selected.isTv && session?.tvId == selected.deviceId;
     return PopScope(
       canPop: selected == null,
       onPopInvokedWithResult: (didPop, _) {
@@ -114,29 +131,97 @@ class _RemoteScreenState extends State<RemoteScreen> {
         appBar: AppBar(
           title: Text(selected == null ? 'Modo mando' : selected.name),
           actions: [
-            if (selected != null)
+            if (selected != null && selected.isTv)
               TextButton.icon(
+                onPressed: () => _choose(selected.deviceId),
+                icon: const Icon(Icons.library_books_rounded),
+                label: const Text('Elegir otro'),
+              ),
+            if (selected != null)
+              IconButton(
+                tooltip: 'Desconectar',
                 onPressed: () => setState(() => _selectedId = null),
                 icon: const Icon(Icons.link_off_rounded),
-                label: const Text('Desconectar'),
               ),
             const SizedBox(width: 8),
           ],
         ),
-        body: link == null
+        body: !_hub.available
             ? const _Message(
                 icon: Icons.cloud_off_rounded,
                 text: 'El modo mando usa KofuSync.\nConfigúralo en Ajustes → Sincronización.',
               )
             : selected != null
-            ? _Controller(screen: selected, send: _send)
+            ? _Controller(
+                screen: selected,
+                send: _send,
+                hasNext: tvOwned ? session!.hasNext : selected.hasNext,
+                hasPrev: tvOwned ? session!.hasPrev : selected.hasPrev,
+              )
             : _ScreenList(
-                screens: _screens,
-                loading: !_received,
-                error: link.connected ? null : link.error,
+                screens: _hub.others,
+                loading: !_hub.received,
+                error: _hub.connected ? null : _hub.error,
                 onTap: _connect,
+                onPairTv: _pairTv,
               ),
       ),
+    );
+  }
+}
+
+/// Pide el código de 4 cifras que muestra la tele.
+class _PairDialog extends StatefulWidget {
+  const _PairDialog();
+
+  @override
+  State<_PairDialog> createState() => _PairDialogState();
+}
+
+class _PairDialogState extends State<_PairDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    void submit() {
+      if (_controller.text.trim().length == 4) Navigator.pop(context, _controller.text.trim());
+    }
+
+    return AlertDialog(
+      title: const Text('Añadir tele'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'En el navegador de la tele abre la dirección de KofuSync terminada en /tv '
+            '(por ejemplo http://192.168.1.29:49200/tv) y escribe aquí el código que aparece.',
+            style: TextStyle(color: Kofu.muted, fontSize: 13),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            maxLength: 4,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, letterSpacing: 12),
+            decoration: const InputDecoration(counterText: '', hintText: '0000'),
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            onSubmitted: (_) => submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+        FilledButton(onPressed: submit, child: const Text('Emparejar')),
+      ],
     );
   }
 }
@@ -170,22 +255,34 @@ class _Message extends StatelessWidget {
 }
 
 class _ScreenList extends StatelessWidget {
-  final List<_Screen> screens;
+  final List<RemoteScreenInfo> screens;
   final bool loading;
   final String? error;
-  final ValueChanged<_Screen> onTap;
+  final ValueChanged<RemoteScreenInfo> onTap;
+  final VoidCallback onPairTv;
 
-  const _ScreenList({required this.screens, required this.loading, required this.error, required this.onTap});
+  const _ScreenList({
+    required this.screens,
+    required this.loading,
+    required this.error,
+    required this.onTap,
+    required this.onPairTv,
+  });
 
   @override
   Widget build(BuildContext context) {
     if (error != null) return _Message(icon: Icons.wifi_off_rounded, text: error!);
     if (loading) return const Center(child: CircularProgressIndicator());
+    final pairButton = OutlinedButton.icon(
+      onPressed: onPairTv,
+      icon: const Icon(Icons.tv_rounded),
+      label: const Text('Añadir tele'),
+    );
     if (screens.isEmpty) {
-      return const _Message(
+      return _Message(
         icon: Icons.tv_rounded,
-        text: 'Abre un cómic en el PC y aparecerá aquí.\nTodos tus dispositivos con KofuSync se ven automáticamente.',
-        extra: SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+        text: 'Abre un cómic en el PC, o la web de KofuSync en la tele, y aparecerá aquí.',
+        extra: pairButton,
       );
     }
     return ListView(
@@ -193,7 +290,7 @@ class _ScreenList extends StatelessWidget {
       children: [
         const Padding(
           padding: EdgeInsets.fromLTRB(4, 0, 4, 12),
-          child: Text('Pantallas con un libro abierto', style: TextStyle(color: Kofu.muted)),
+          child: Text('Pantallas disponibles', style: TextStyle(color: Kofu.muted)),
         ),
         for (final s in screens)
           Padding(
@@ -216,7 +313,11 @@ class _ScreenList extends StatelessWidget {
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: Icon(
-                          s.name == 'PC' ? Icons.desktop_windows_rounded : Icons.tablet_mac_rounded,
+                          s.isTv
+                              ? Icons.tv_rounded
+                              : s.name == 'PC'
+                              ? Icons.desktop_windows_rounded
+                              : Icons.tablet_mac_rounded,
                           color: Colors.white,
                         ),
                       ),
@@ -228,7 +329,11 @@ class _ScreenList extends StatelessWidget {
                             Text(s.name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
                             const SizedBox(height: 2),
                             Text(
-                              s.series.isEmpty ? s.title : '${s.series} · ${s.title}',
+                              !s.hasBook
+                                  ? 'Toca para elegir qué leer'
+                                  : s.series.isEmpty
+                                  ? s.title
+                                  : '${s.series} · ${s.title}',
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(color: Kofu.muted, fontSize: 13),
@@ -236,13 +341,15 @@ class _ScreenList extends StatelessWidget {
                           ],
                         ),
                       ),
-                      const Icon(Icons.settings_remote_rounded, color: Kofu.accent),
+                      Icon(s.hasBook ? Icons.settings_remote_rounded : Icons.library_add_rounded, color: Kofu.accent),
                     ],
                   ),
                 ),
               ),
             ),
           ),
+        const SizedBox(height: 8),
+        Center(child: pairButton),
       ],
     );
   }
@@ -250,10 +357,12 @@ class _ScreenList extends StatelessWidget {
 
 /// El mando en sí: zonas grandes para pasar páginas, o trackpad en vertical.
 class _Controller extends StatelessWidget {
-  final _Screen screen;
+  final RemoteScreenInfo screen;
   final void Function(String cmd, [Map<String, dynamic> args]) send;
+  final bool hasNext;
+  final bool hasPrev;
 
-  const _Controller({required this.screen, required this.send});
+  const _Controller({required this.screen, required this.send, required this.hasNext, required this.hasPrev});
 
   @override
   Widget build(BuildContext context) {
@@ -275,13 +384,13 @@ class _Controller extends StatelessWidget {
                 _BarButton(
                   icon: Icons.skip_previous_rounded,
                   label: 'Cap. anterior',
-                  onTap: screen.hasPrev ? () => send('prevChapter') : null,
+                  onTap: hasPrev ? () => send('prevChapter') : null,
                 ),
                 _BarButton(icon: Icons.menu_rounded, label: 'Menú', onTap: () => send('overlay')),
                 _BarButton(
                   icon: Icons.skip_next_rounded,
                   label: 'Cap. siguiente',
-                  onTap: screen.hasNext ? () => send('nextChapter') : null,
+                  onTap: hasNext ? () => send('nextChapter') : null,
                 ),
                 _BarButton(icon: Icons.close_rounded, label: 'Salir', onTap: () => send('exit')),
               ],
@@ -294,7 +403,7 @@ class _Controller extends StatelessWidget {
 }
 
 class _StatusStrip extends StatelessWidget {
-  final _Screen screen;
+  final RemoteScreenInfo screen;
 
   const _StatusStrip({required this.screen});
 
