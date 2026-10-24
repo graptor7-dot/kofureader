@@ -6,6 +6,7 @@ import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'downloads_screen.dart';
+import 'history_screen.dart';
 import 'library_screen.dart';
 import 'list_screen.dart';
 import 'navigation.dart';
@@ -115,6 +116,11 @@ class _HomeScreenState extends State<HomeScreen> {
         for (final e in g.libraries)
           if (!state.isLibraryHidden(e.source.id, e.library.id)) e,
     ];
+  }
+
+  Future<void> _openHistory() async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen()));
+    _refreshContinue();
   }
 
   void _openSources() => Navigator.push(context, MaterialPageRoute(builder: (_) => const SourcesScreen()));
@@ -295,9 +301,20 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-                child: Text(
-                  'Seguir leyendo',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Seguir leyendo',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: _openHistory,
+                      icon: const Icon(Icons.history_rounded, size: 18),
+                      label: const Text('Historial'),
+                    ),
+                  ],
                 ),
               ),
               SizedBox(
@@ -389,7 +406,7 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisSpacing: 16,
           mainAxisSpacing: 16,
         ),
-        itemCount: favCount + lists.length + 2,
+        itemCount: favCount + lists.length + 3,
         itemBuilder: (context, index) {
           if (index < favCount) {
             final e = libraries[index];
@@ -428,6 +445,9 @@ class _HomeScreenState extends State<HomeScreen> {
             );
           }
           if (i == lists.length + 1) {
+            return _HistoryCard(onTap: _openHistory);
+          }
+          if (i == lists.length + 2) {
             return _NewListCard(
               onTap: () async {
                 final name = await askListName(context);
@@ -857,6 +877,50 @@ class _CastBanner extends StatelessWidget {
           ),
           TextButton(onPressed: hub.cancelChoosing, child: const Text('Cancelar')),
         ],
+      ),
+    );
+  }
+}
+
+class _HistoryCard extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _HistoryCard({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(Kofu.radius + 4);
+    return Material(
+      color: Kofu.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Stack(
+          children: [
+            Positioned(
+              right: -20,
+              bottom: -20,
+              child: Icon(Icons.history_rounded, size: 120, color: const Color(0xFF38BDF8).withValues(alpha: 0.12)),
+            ),
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.history_rounded, color: Color(0xFF38BDF8)),
+                  Spacer(),
+                  Text('Historial', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                  SizedBox(height: 2),
+                  Text('Todo lo que has leído', style: TextStyle(fontSize: 12, color: Kofu.muted)),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

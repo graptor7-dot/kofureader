@@ -121,6 +121,17 @@ class KomgaClient {
     return KomgaPage.fromJson(json as Map<String, dynamic>, KomgaBook.fromJson).content;
   }
 
+  /// Historial: libros empezados o leídos, del más reciente al más antiguo.
+  Future<KomgaPage<KomgaBook>> readHistory({int page = 0, int size = 40, Set<ReadStatus>? status}) async {
+    final json = await _get('/books', {
+      'read_status': (status ?? {ReadStatus.inProgress, ReadStatus.read}).map((s) => s.api).toList(),
+      'sort': 'readProgress.readDate,desc',
+      'page': page,
+      'size': size,
+    });
+    return KomgaPage.fromJson(json as Map<String, dynamic>, KomgaBook.fromJson);
+  }
+
   /// Libros empezados, los leídos más recientemente primero.
   Future<List<KomgaBook>> inProgressBooks({int size = 20}) async {
     final json = await _get('/books', {
