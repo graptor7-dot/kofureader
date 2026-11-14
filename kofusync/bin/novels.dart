@@ -4,7 +4,7 @@ part of 'server.dart';
 // Novelas: KofuSync sirve una carpeta de texto (montada en solo lectura).
 //
 //   /novels/<Biblioteca>/<Obra>/cover.jpg
-//   /novels/<Biblioteca>/<Obra>/001 - Título.txt         (o .md)
+//   /novels/<Biblioteca>/<Obra>/001 - Título.txt         (o .md, o .epub)
 //   /novels/<Biblioteca>/<Obra>/Volumen 1/001 - ….txt    (subcarpetas opcionales)
 //
 // Rutas (con el token, como /sync):
@@ -17,7 +17,7 @@ part of 'server.dart';
 
 late final Directory _novelsRoot;
 
-const _textExtensions = {'.txt', '.md'};
+const _textExtensions = {'.txt', '.md', '.epub'};
 const _imageExtensions = {'.jpg', '.jpeg', '.png', '.webp', '.gif'};
 
 void _initNovels() {
@@ -170,10 +170,14 @@ Future<void> _novels(HttpRequest req) async {
       }
       final bytes = await file.readAsBytes();
       String text;
-      try {
-        text = utf8.decode(bytes);
-      } catch (_) {
-        text = latin1.decode(bytes); // TXT antiguos en ANSI/Latin-1
+      if (_ext(file.path) == '.epub') {
+        text = _epubToText(bytes);
+      } else {
+        try {
+          text = utf8.decode(bytes);
+        } catch (_) {
+          text = latin1.decode(bytes); // TXT antiguos en ANSI/Latin-1
+        }
       }
       if (text.startsWith('﻿')) text = text.substring(1);
       req.response
@@ -195,4 +199,67 @@ Future<void> _novels(HttpRequest req) async {
       return;
   }
   return _json(req, 404, {'error': 'not found'});
+}
+
+/// Texto de un EPUB: los documentos del "spine" en orden, con párrafos separados
+/// por una línea en blanco y los títulos como "# Título" (lo que espera la app).
+String _epubToText(List<int> bytes) {
+  final zip = ZipDecoder().decodeBytes(bytes);
+  String? read(String path) {
+    final f = zip.findFile(path);
+    return f == null ? null : utf8.decode(f.content as List<int>, allowMalformed: true);
+  }
+
+  final container = read('META-INF/container.xml') ?? '';
+  final opfPath = RegExp(r'full-path="([^"]+)"').firstMatch(container)?.group(1);
+  final opf = opfPath == null ? null : read(opfPath);
+  final docs = <String>[];
+  if (opf != null) {
+    final dir = opfPath!.contains('/') ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1) : '';
+    final manifest = <String, String>{};
+    for (final m in RegExp(r'<item\b[^>]*>').allMatches(opf)) {
+      final tag = m.group(0)!;
+      final id = RegExp(r'\bid="([^"]+)"').firstMatch(tag)?.group(1);
+      final href = RegExp(r'\bhref="([^"]+)"').firstMatch(tag)?.group(1);
+      final props = RegExp(r'\bproperties="([^"]+)"').firstMatch(tag)?.group(1) ?? '';
+      if (id != null && href != null && !props.contains('nav')) manifest[id] = '$dir${Uri.decodeFull(href)}';
+    }
+    for (final m in RegExp(r'<itemref\b[^>]*\bidref="([^"]+)"').allMatches(opf)) {
+      final html = manifest[m.group(1)] == null ? null : read(manifest[m.group(1)]!);
+      if (html != null) docs.add(html);
+    }
+  }
+  if (docs.isEmpty) {
+    // EPUB raro: todos los (x)html que haya.
+    for (final f in zip.files.where((f) => f.isFile && RegExp(r'\.x?html?$').hasMatch(f.name))) {
+      docs.add(utf8.decode(f.content as List<int>, allowMalformed: true));
+    }
+  }
+  return docs.map(_htmlToText).join('\n\n').trim();
+}
+
+String _htmlToText(String html) {
+  var s = html;
+  final body = RegExp(r'<body[^>]*>([\s\S]*)</body>', caseSensitive: false).firstMatch(s);
+  if (body != null) s = body.group(1)!;
+  s = s.replaceAll(RegExp(r'<(script|style)[\s\S]*?</\1>', caseSensitive: false), '');
+  s = s.replaceAllMapped(
+    RegExp(r'<h[1-6][^>]*>([\s\S]*?)</h[1-6]>', caseSensitive: false),
+    (m) => '\n\n# ${m.group(1)!.replaceAll(RegExp(r'<[^>]+>'), '').trim()}\n\n',
+  );
+  s = s.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
+  s = s.replaceAll(RegExp(r'<hr[^>]*>', caseSensitive: false), '\n\n***\n\n');
+  s = s.replaceAll(RegExp(r'</(p|div|blockquote|li|section)>', caseSensitive: false), '\n\n');
+  s = s.replaceAll(RegExp(r'<[^>]+>'), '');
+  s = s
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&apos;', "'")
+      .replaceAllMapped(RegExp(r'&#x([0-9a-fA-F]+);'), (m) => String.fromCharCode(int.parse(m.group(1)!, radix: 16)))
+      .replaceAllMapped(RegExp(r'&#(\d+);'), (m) => String.fromCharCode(int.parse(m.group(1)!)))
+      .replaceAll('&amp;', '&');
+  return s.replaceAll(RegExp(r'[ \t]+\n'), '\n').replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
 }

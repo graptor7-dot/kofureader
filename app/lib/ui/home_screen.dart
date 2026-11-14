@@ -52,7 +52,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<List<SourceLibraries>>? _libraries;
   Future<List<SourcedBook>>? _continue;
   Future<List<NovelLibrary>>? _novelLibs;
-  final _novelPreviews = <String, Future<List<NovelWork>>>{};
+  List<NovelLibrary> _novelLibList = const [];
+  Future<List<NovelWork>>? _novelPreview;
   final _previews = <String, Future<List<KomgaSeries>>>{};
   final _selection = SelectionController<_HomePick>();
   int _sourcesSignature = -1;
@@ -89,10 +90,13 @@ class _HomeScreenState extends State<HomeScreen> {
     _previews.clear();
     _libraries = state.loadAllLibraries(refresh: refresh);
     _continue = state.continueReading();
-    _novelPreviews.clear();
+    _novelPreview = null;
     _novelLibs = state.novels.available
         ? state.novels.libraries().catchError((_) => <NovelLibrary>[])
         : Future.value(const <NovelLibrary>[]);
+    _novelLibs!.then((libs) {
+      if (mounted) setState(() => _novelLibList = libs);
+    });
   }
 
   Future<void> _reload() async {
@@ -412,6 +416,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final state = AppScope.read(context);
     final offline = groups.where((g) => g.error != null).toList();
     final entries = _visibleLibraries(groups);
+    final novelLibs = _novelLibList.where((l) => !state.isLibraryHidden(novelsSourceId, l.id)).toList();
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       sliver: SliverMainAxisGroup(
@@ -435,8 +440,21 @@ class _HomeScreenState extends State<HomeScreen> {
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
             ),
-            itemCount: entries.length,
+            itemCount: entries.length + (novelLibs.isEmpty ? 0 : 1),
             itemBuilder: (context, i) {
+              // La última tarjeta es "Novelas" (todas las carpetas de novelas juntas).
+              if (i == entries.length) {
+                return _NovelLibraryCard(
+                  libraries: novelLibs,
+                  preview: _novelPreview ??= Future.wait(
+                    novelLibs.map((l) => state.novels.works(l.id).catchError((_) => <NovelWork>[])),
+                  ).then((all) => all.expand((w) => w).toList()),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => NovelLibraryScreen(libraries: novelLibs)),
+                  ),
+                );
+              }
               final e = entries[i];
               final key = 'lib:${e.key}';
               return _LibraryCard(
@@ -452,39 +470,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         _refreshContinue();
                       },
                 onLongPress: () => _selection.toggle(key, _LibraryPick(e)),
-              );
-            },
-          ),
-          // Bibliotecas de novelas (servidas por KofuSync).
-          FutureBuilder<List<NovelLibrary>>(
-            future: _novelLibs,
-            builder: (context, snap) {
-              final libs = (snap.data ?? const <NovelLibrary>[])
-                  .where((l) => !state.isLibraryHidden(novelsSourceId, l.id))
-                  .toList();
-              return SliverPadding(
-                padding: EdgeInsets.only(top: libs.isEmpty ? 0 : 16),
-                sliver: SliverGrid.builder(
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 460,
-                    childAspectRatio: 2.3,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                  ),
-                  itemCount: libs.length,
-                  itemBuilder: (context, i) {
-                    final lib = libs[i];
-                    return _NovelLibraryCard(
-                      library: lib,
-                      preview: _novelPreviews.putIfAbsent(
-                        lib.id,
-                        () => state.novels.works(lib.id).catchError((_) => <NovelWork>[]),
-                      ),
-                      onTap: () =>
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => NovelLibraryScreen(library: lib))),
-                    );
-                  },
-                ),
               );
             },
           ),
@@ -837,11 +822,11 @@ class _LibraryCard extends StatelessWidget {
 
 /// Tarjeta de biblioteca de novelas: portadas inclinadas y etiqueta "Novelas".
 class _NovelLibraryCard extends StatelessWidget {
-  final NovelLibrary library;
+  final List<NovelLibrary> libraries;
   final Future<List<NovelWork>> preview;
   final VoidCallback onTap;
 
-  const _NovelLibraryCard({required this.library, required this.preview, required this.onTap});
+  const _NovelLibraryCard({required this.libraries, required this.preview, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -894,10 +879,10 @@ class _NovelLibraryCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SourceChip(label: 'Novelas', color: Kofu.accent2),
+                  const SourceChip(label: 'Texto', color: Kofu.accent2),
                   const Spacer(),
                   Text(
-                    library.name,
+                    'Novelas',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, letterSpacing: -0.3),

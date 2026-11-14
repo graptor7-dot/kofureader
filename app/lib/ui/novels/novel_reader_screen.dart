@@ -331,7 +331,8 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
                     style: style.copyWith(fontSize: style.fontSize! * 1.35, fontWeight: FontWeight.w800, height: 1.25),
                   ),
                   SizedBox(height: style.fontSize! * 1.4),
-                  for (final b in blocks)
+                  // El primer título del capítulo ya se muestra arriba: no repetirlo.
+                  for (final b in (blocks.isNotEmpty && blocks.first.heading) ? blocks.skip(1) : blocks)
                     if (b.separator)
                       Padding(
                         padding: EdgeInsets.symmetric(vertical: style.fontSize!),

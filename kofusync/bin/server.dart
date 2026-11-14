@@ -15,6 +15,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:archive/archive.dart';
+
 part 'novels.dart';
 part 'tv.dart';
 part 'tv_page.dart';

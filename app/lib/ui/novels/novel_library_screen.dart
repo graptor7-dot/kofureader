@@ -49,11 +49,12 @@ class _NoCover extends StatelessWidget {
   );
 }
 
-/// Obras de una biblioteca de novelas.
+/// La biblioteca "Novelas": todas las obras, con un filtro por subcarpeta
+/// (Novelas Web, Novelas Ligeras…).
 class NovelLibraryScreen extends StatefulWidget {
-  final NovelLibrary library;
+  final List<NovelLibrary> libraries;
 
-  const NovelLibraryScreen({super.key, required this.library});
+  const NovelLibraryScreen({super.key, required this.libraries});
 
   @override
   State<NovelLibraryScreen> createState() => _NovelLibraryScreenState();
@@ -62,8 +63,13 @@ class NovelLibraryScreen extends StatefulWidget {
 class _NovelLibraryScreenState extends State<NovelLibraryScreen> {
   late Future<List<NovelWork>> _future = _load();
   String _search = '';
+  String? _lib; // null = todas
 
-  Future<List<NovelWork>> _load() => AppScope.read(context).novels.works(widget.library.id);
+  Future<List<NovelWork>> _load() async {
+    final novels = AppScope.read(context).novels;
+    final perLib = await Future.wait(widget.libraries.map((l) => novels.works(l.id)));
+    return perLib.expand((w) => w).toList()..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+  }
 
   Future<void> _reload() async {
     final f = _load();
@@ -81,7 +87,10 @@ class _NovelLibraryScreenState extends State<NovelLibraryScreen> {
       builder: (context, snap) {
         final all = snap.data ?? const <NovelWork>[];
         final q = _search.toLowerCase();
-        final works = q.isEmpty ? all : all.where((w) => w.title.toLowerCase().contains(q)).toList();
+        final works = all
+            .where((w) => _lib == null || w.lib == _lib)
+            .where((w) => q.isEmpty || w.title.toLowerCase().contains(q))
+            .toList();
         return Scaffold(
           floatingActionButton: works.isEmpty ? null : RandomFab(onPressed: () => _open(pickRandom(works))),
           body: RefreshIndicator(
@@ -94,7 +103,7 @@ class _NovelLibraryScreenState extends State<NovelLibraryScreen> {
                   expandedHeight: 120,
                   flexibleSpace: FlexibleSpaceBar(
                     titlePadding: const EdgeInsetsDirectional.only(start: 56, bottom: 14),
-                    title: Text(widget.library.name, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    title: const Text('Novelas', style: TextStyle(fontWeight: FontWeight.w800)),
                     background: const DecoratedBox(
                       decoration: BoxDecoration(
                         gradient: RadialGradient(
@@ -119,6 +128,24 @@ class _NovelLibraryScreenState extends State<NovelLibraryScreen> {
                     ),
                   ),
                 ),
+                if (widget.libraries.length > 1)
+                  SliverToBoxAdapter(
+                    child: FilterRow(
+                      children: [
+                        ChoiceChip(
+                          label: Text('Todas · ${all.length}'),
+                          selected: _lib == null,
+                          onSelected: (_) => setState(() => _lib = null),
+                        ),
+                        for (final l in widget.libraries)
+                          ChoiceChip(
+                            label: Text('${l.name} · ${all.where((w) => w.lib == l.id).length}'),
+                            selected: _lib == l.id,
+                            onSelected: (_) => setState(() => _lib = l.id),
+                          ),
+                      ],
+                    ),
+                  ),
                 if (snap.hasError)
                   SliverFillRemaining(
                     hasScrollBody: false,
