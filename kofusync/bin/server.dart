@@ -33,7 +33,9 @@ Future<void> main() async {
   final env = Platform.environment;
   final token = env['KOFUSYNC_TOKEN'] ?? '';
   if (token.length < 16) {
-    stderr.writeln('KOFUSYNC_TOKEN es obligatorio y debe tener al menos 16 caracteres.');
+    stderr.writeln(
+      'KOFUSYNC_TOKEN es obligatorio y debe tener al menos 16 caracteres.',
+    );
     exit(1);
   }
   _token = token;
@@ -46,9 +48,12 @@ Future<void> main() async {
 
   final port = int.tryParse(env['KOFUSYNC_PORT'] ?? '') ?? 8080;
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
-  stdout.writeln('KofuSync escuchando en el puerto $port (${_records.length} registros, seq $_seq)');
+  stdout.writeln(
+    'KofuSync escuchando en el puerto $port (${_records.length} registros, seq $_seq)',
+  );
   ProcessSignal.sigint.watch().listen((_) => _shutdown(server));
-  if (!Platform.isWindows) ProcessSignal.sigterm.watch().listen((_) => _shutdown(server));
+  if (!Platform.isWindows)
+    ProcessSignal.sigterm.watch().listen((_) => _shutdown(server));
 
   await for (final req in server) {
     unawaited(_handle(req));
@@ -73,7 +78,11 @@ Future<void> _load() async {
 
 /// Escritura atómica (fichero temporal + renombrado), encadenada para no solapar.
 Future<void> _save() {
-  final snapshot = jsonEncode({'version': 1, 'seq': _seq, 'records': _records.values.toList()});
+  final snapshot = jsonEncode({
+    'version': 1,
+    'seq': _seq,
+    'records': _records.values.toList(),
+  });
   return _writing = _writing.then((_) async {
     final tmp = File('${_file.path}.tmp');
     await tmp.writeAsString(snapshot, flush: true);
@@ -101,14 +110,24 @@ Future<void> _handle(HttpRequest req) async {
   try {
     final path = req.uri.path;
     if (req.method == 'GET' && path == '/health') {
-      return _json(req, 200, {'ok': true, 'version': 3, 'remote': true, 'novels': true});
+      return _json(req, 200, {
+        'ok': true,
+        'version': 4,
+        'remote': true,
+        'novels': true,
+        'novelSearch': true,
+      });
     }
-    if (req.method == 'GET' && (path == '/novels' || path.startsWith('/novels/'))) return await _novels(req);
-    if (req.method == 'GET' && (path == '/tv' || path == '/tv/')) return _tvHtml(req);
+    if (req.method == 'GET' &&
+        (path == '/novels' || path.startsWith('/novels/')))
+      return await _novels(req);
+    if (req.method == 'GET' && (path == '/tv' || path == '/tv/'))
+      return _tvHtml(req);
     if (req.method == 'GET' && path == '/tv/page') return await _tvPage(req);
     if (path == '/tvws' && WebSocketTransformer.isUpgradeRequest(req)) {
       final id = req.uri.queryParameters['id'] ?? '';
-      if (id.length < 8 || id.length > 64) return _json(req, 400, {'error': 'bad id'});
+      if (id.length < 8 || id.length > 64)
+        return _json(req, 400, {'error': 'bad id'});
       final socket = await WebSocketTransformer.upgrade(req);
       return _tvSocket(socket, id, req.uri.queryParameters['s']);
     }
@@ -143,10 +162,15 @@ Future<void> _sync(HttpRequest req) async {
   var accepted = 0;
   for (final c in (body['changes'] as List? ?? [])) {
     final rec = (c as Map).cast<String, dynamic>();
-    if (rec['type'] is! String || rec['id'] is! String || rec['updatedAt'] is! int) continue;
+    if (rec['type'] is! String ||
+        rec['id'] is! String ||
+        rec['updatedAt'] is! int)
+      continue;
     final key = _key(rec);
     final existing = _records[key];
-    if (existing != null && (existing['updatedAt'] as int) >= (rec['updatedAt'] as int)) continue;
+    if (existing != null &&
+        (existing['updatedAt'] as int) >= (rec['updatedAt'] as int))
+      continue;
     _records[key] = {
       'type': rec['type'],
       'id': rec['id'],
@@ -158,7 +182,9 @@ Future<void> _sync(HttpRequest req) async {
     accepted++;
   }
   if (accepted > 0) await _save();
-  final changes = _records.values.where((r) => (r['seq'] as int) > since).toList();
+  final changes = _records.values
+      .where((r) => (r['seq'] as int) > since)
+      .toList();
   _json(req, 200, {'cursor': _seq, 'accepted': accepted, 'changes': changes});
 }
 
@@ -223,7 +249,15 @@ void _onRemoteMessage(_Peer peer, Map<String, dynamic> msg) {
         ..name = '${msg['name']}'
         ..role = '${msg['role']}';
       // Un dispositivo reconectado sustituye a su conexión anterior con el mismo papel.
-      for (final old in _peers.where((p) => p != peer && p.deviceId == peer.deviceId && p.role == peer.role).toList()) {
+      for (final old
+          in _peers
+              .where(
+                (p) =>
+                    p != peer &&
+                    p.deviceId == peer.deviceId &&
+                    p.role == peer.role,
+              )
+              .toList()) {
         _peers.remove(old);
         old.socket.close();
       }
@@ -236,7 +270,9 @@ void _onRemoteMessage(_Peer peer, Map<String, dynamic> msg) {
       peer.state = (msg['state'] as Map? ?? {}).cast<String, dynamic>();
       _broadcastScreens();
     case 'command' || 'attach' when peer.role == 'remote':
-      final target = _peers.where((p) => p.role == 'screen' && p.deviceId == msg['to']).firstOrNull;
+      final target = _peers
+          .where((p) => p.role == 'screen' && p.deviceId == msg['to'])
+          .firstOrNull;
       if (target == null) return;
       final out = {...msg, 'from': peer.deviceId, 'fromName': peer.name};
       if (target.kind == 'tv' && msg['cmd'] == 'open') {
@@ -251,10 +287,13 @@ void _onRemoteMessage(_Peer peer, Map<String, dynamic> msg) {
 
 List<Map<String, dynamic>> _screenList() => [
   for (final p in _peers)
-    if (p.role == 'screen') {'deviceId': p.deviceId, 'name': p.name, 'kind': p.kind, ...p.state},
+    if (p.role == 'screen')
+      {'deviceId': p.deviceId, 'name': p.name, 'kind': p.kind, ...p.state},
 ];
 
-void _sendScreens(_Peer remote) => remote.socket.add(jsonEncode({'type': 'screens', 'screens': _screenList()}));
+void _sendScreens(_Peer remote) => remote.socket.add(
+  jsonEncode({'type': 'screens', 'screens': _screenList()}),
+);
 
 void _broadcastScreens() {
   for (final p in _peers.where((p) => p.role == 'remote').toList()) {

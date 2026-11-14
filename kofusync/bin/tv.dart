@@ -29,15 +29,21 @@ Future<void> _loadTv(Directory dataDir) async {
   _tvFile = File('${dataDir.path}/tv.json');
   if (!await _tvFile.exists()) return;
   try {
-    (jsonDecode(await _tvFile.readAsString()) as Map).forEach((k, v) => _tvSecrets['$k'] = '$v');
+    (jsonDecode(await _tvFile.readAsString()) as Map).forEach(
+      (k, v) => _tvSecrets['$k'] = '$v',
+    );
   } catch (_) {}
 }
 
-Future<void> _saveTv() => _tvFile.writeAsString(jsonEncode(_tvSecrets), flush: true);
+Future<void> _saveTv() =>
+    _tvFile.writeAsString(jsonEncode(_tvSecrets), flush: true);
 
 String _randomSecret() {
   final r = Random.secure();
-  return List.generate(32, (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+  return List.generate(
+    32,
+    (_) => r.nextInt(256).toRadixString(16).padLeft(2, '0'),
+  ).join();
 }
 
 String _newCode() {
@@ -51,7 +57,8 @@ String _newCode() {
 
 bool _tvAuthorized(String id, String? secret) {
   final expected = _tvSecrets[id];
-  if (expected == null || secret == null || secret.length != expected.length) return false;
+  if (expected == null || secret == null || secret.length != expected.length)
+    return false;
   var diff = 0;
   for (var i = 0; i < secret.length; i++) {
     diff |= secret.codeUnitAt(i) ^ expected.codeUnitAt(i);
@@ -99,7 +106,12 @@ void _tvSocket(WebSocket socket, String id, String? secret) {
 
 void _becomeScreen(_Peer tv) {
   // Una tele reconectada sustituye a su conexión anterior.
-  for (final old in _peers.where((p) => p != tv && p.deviceId == tv.deviceId && p.role == 'screen').toList()) {
+  for (final old
+      in _peers
+          .where(
+            (p) => p != tv && p.deviceId == tv.deviceId && p.role == 'screen',
+          )
+          .toList()) {
     _peers.remove(old);
     old.socket.close();
   }
@@ -121,7 +133,9 @@ Future<void> _pairTv(_Peer remote, String code) async {
   await _saveTv();
   tv.socket.add(jsonEncode({'type': 'paired', 'secret': secret}));
   _becomeScreen(tv);
-  remote.socket.add(jsonEncode({'type': 'paired', 'ok': true, 'deviceId': tv.deviceId}));
+  remote.socket.add(
+    jsonEncode({'type': 'paired', 'ok': true, 'deviceId': tv.deviceId}),
+  );
 }
 
 /// Orden "open" para una tele: se guarda cómo llegar a Komga y se reenvía sin credenciales.
@@ -141,14 +155,20 @@ void _openOnTv(_Peer tv, Map<String, dynamic> msg) {
 Future<void> _tvPage(HttpRequest req) async {
   final q = req.uri.queryParameters;
   final id = q['id'] ?? '';
-  if (!_tvAuthorized(id, q['s'])) return _json(req, 401, {'error': 'unauthorized'});
+  if (!_tvAuthorized(id, q['s']))
+    return _json(req, 401, {'error': 'unauthorized'});
   final book = _tvBooks[id];
   final n = int.tryParse(q['n'] ?? '');
-  if (book == null || n == null || q['b'] != book['bookId']) return _json(req, 404, {'error': 'no book'});
+  if (book == null || n == null || q['b'] != book['bookId'])
+    return _json(req, 404, {'error': 'no book'});
   try {
     final base = '${book['baseUrl']}'.replaceAll(RegExp(r'/+$'), '');
-    final upstream = await _http.getUrl(Uri.parse('$base/api/v1/books/${book['bookId']}/pages/$n'));
-    (book['headers'] as Map<String, dynamic>).forEach((k, v) => upstream.headers.set(k, '$v'));
+    final upstream = await _http.getUrl(
+      Uri.parse('$base/api/v1/books/${book['bookId']}/pages/$n'),
+    );
+    (book['headers'] as Map<String, dynamic>).forEach(
+      (k, v) => upstream.headers.set(k, '$v'),
+    );
     final res = await upstream.close().timeout(const Duration(seconds: 30));
     req.response.statusCode = res.statusCode;
     final type = res.headers.contentType;

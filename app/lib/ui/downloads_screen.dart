@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 import '../data/app_scope.dart';
 import '../data/app_state.dart';
 import '../data/downloads.dart';
+import '../data/novels.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'navigation.dart' show startReading;
+import 'novels/novel_library_screen.dart' show novelCoverImage, novelType;
+import 'novels/novel_work_screen.dart';
 import 'widgets/cover_card.dart';
 import 'widgets/selection.dart';
 
@@ -89,6 +92,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     for (final b in all) {
       groups.putIfAbsent('${b.sourceId}|${b.seriesId}', () => []).add(b);
     }
+    final novels = state.novels.downloadedWorks.where((w) => !state.isLibraryHidden('novels', w.lib)).toList()
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
     final seriesKeys = groups.keys.toList()
       ..sort(
         (a, b) => groups[a]!.first.seriesTitle.toLowerCase().compareTo(groups[b]!.first.seriesTitle.toLowerCase()),
@@ -171,7 +176,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 ),
               ),
             SliverToBoxAdapter(child: _Summary(downloads: downloads)),
-            if (all.isEmpty)
+            if (all.isEmpty && novels.isEmpty)
               const SliverFillRemaining(
                 hasScrollBody: false,
                 child: Center(
@@ -192,14 +197,57 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   ),
                 ),
               )
-            else
+            else ...[
+              if (novels.isNotEmpty) ..._novelSection(state, novels),
               for (final key in seriesKeys) ..._seriesSection(state, groups[key]!),
+            ],
             const SliverToBoxAdapter(child: SizedBox(height: 120)),
           ],
         ),
       ),
     );
   }
+
+  List<Widget> _novelSection(AppState state, List<NovelWork> works) => [
+    const SliverToBoxAdapter(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(20, 20, 8, 8),
+        child: Text('Novelas', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+      ),
+    ),
+    SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverGrid.builder(
+        gridDelegate: coverGridDelegate,
+        itemCount: works.length,
+        itemBuilder: (context, i) {
+          final w = works[i];
+          final type = novelType(state.novels.offlineLibraryName(w));
+          return CoverCard(
+            imageUrl: '',
+            headers: const {},
+            image: novelCoverImage(state.novels, w),
+            title: w.title,
+            subtitle: '${w.chapters} capítulos',
+            tag: type.$1,
+            tagColor: type.$2,
+            downloaded: true,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => NovelWorkScreen(work: w, libraryName: state.novels.offlineLibraryName(w)),
+              ),
+            ),
+            onLongPress: () => _confirmDelete(
+              '¿Borrar la descarga de "${w.title}"?',
+              'Seguirá disponible en KofuSync.',
+              () => state.novels.removeDownload(w),
+            ),
+          );
+        },
+      ),
+    ),
+  ];
 
   List<Widget> _seriesSection(AppState state, List<DownloadedBook> unsorted) {
     final first = unsorted.first;

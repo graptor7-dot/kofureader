@@ -9,6 +9,7 @@ import '../data/source.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'navigation.dart' show startReading;
+import 'extras_screens.dart';
 import 'widgets/cover_card.dart';
 import 'widgets/list_sheets.dart';
 import 'widgets/reading_mode_picker.dart';
@@ -168,7 +169,15 @@ class _SeriesScreenState extends State<SeriesScreen> {
     );
   }
 
-  List<KomgaBook> get _visible => _status.isEmpty ? _books! : _books!.where((b) => _status.contains(b.status)).toList();
+  String? _tag;
+
+  List<KomgaBook> get _visible {
+    final extras = AppScope.read(context).extras;
+    return _books!
+        .where((b) => _status.isEmpty || _status.contains(b.status))
+        .where((b) => _tag == null || extras.tagsOf(b.snapshot(_sourceId).ref).contains(_tag))
+        .toList();
+  }
 
   Future<void> _open(KomgaBook book) async {
     final books = _books!;
@@ -326,6 +335,24 @@ class _SeriesScreenState extends State<SeriesScreen> {
                         PopupMenuItem(value: false, child: Text('Marcar como no leídos')),
                       ],
                     ),
+                  IconButton(
+                    tooltip: 'Etiquetas',
+                    onPressed: () async {
+                      await showTagsSheet(context, _selection.values.map((b) => b.snapshot(_sourceId)).toList());
+                      _selection.clear();
+                    },
+                    icon: const Icon(Icons.sell_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Añadir al Top 10',
+                    onPressed: () async {
+                      for (final b in _selection.values) {
+                        await addToTop10(context, b.snapshot(_sourceId));
+                      }
+                      _selection.clear();
+                    },
+                    icon: const Icon(Icons.emoji_events_rounded, color: Kofu.gold),
+                  ),
                 ],
               )
             : null,
@@ -385,6 +412,9 @@ class _SeriesScreenState extends State<SeriesScreen> {
                         ),
                     ],
                   ),
+                ),
+                SliverToBoxAdapter(
+                  child: TagFilterRow(selected: _tag, onSelected: (t) => setState(() => _tag = t)),
                 ),
                 _booksGrid(state),
                 const SliverToBoxAdapter(child: SizedBox(height: 120)),
@@ -453,16 +483,43 @@ class _SeriesScreenState extends State<SeriesScreen> {
           icon: Icon(Icons.chrome_reader_mode_rounded, color: override != null ? Kofu.accent : null),
         ),
         if (!_offline)
-          PopupMenuButton<bool>(
+          PopupMenuButton<String>(
             tooltip: 'Más opciones',
-            onSelected: _setSeriesRead,
+            onSelected: (v) {
+              final snap = _series?.snapshot(_sourceId);
+              switch (v) {
+                case 'read':
+                  _setSeriesRead(true);
+                case 'unread':
+                  _setSeriesRead(false);
+                case 'rate' when snap != null:
+                  showRatingDialog(context, snap);
+                case 'tags' when snap != null:
+                  showTagsSheet(context, [snap]);
+                case 'top' when snap != null:
+                  addToTop10(context, snap);
+              }
+            },
             itemBuilder: (_) => const [
               PopupMenuItem(
-                value: true,
+                value: 'rate',
+                child: ListTile(leading: Icon(Icons.star_rounded), title: Text('Valorar')),
+              ),
+              PopupMenuItem(
+                value: 'tags',
+                child: ListTile(leading: Icon(Icons.sell_rounded), title: Text('Etiquetas')),
+              ),
+              PopupMenuItem(
+                value: 'top',
+                child: ListTile(leading: Icon(Icons.emoji_events_rounded), title: Text('Añadir al Top 10')),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'read',
                 child: ListTile(leading: Icon(Icons.done_all_rounded), title: Text('Marcar serie como leída')),
               ),
               PopupMenuItem(
-                value: false,
+                value: 'unread',
                 child: ListTile(leading: Icon(Icons.remove_done_rounded), title: Text('Marcar serie como no leída')),
               ),
             ],

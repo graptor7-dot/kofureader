@@ -88,8 +88,15 @@ class NovelReaderScreen extends StatefulWidget {
   final NovelWork work;
   final List<NovelChapter> chapters;
   final int initialIndex;
+  final String? highlight; // texto a resaltar (desde la búsqueda)
 
-  const NovelReaderScreen({super.key, required this.work, required this.chapters, required this.initialIndex});
+  const NovelReaderScreen({
+    super.key,
+    required this.work,
+    required this.chapters,
+    required this.initialIndex,
+    this.highlight,
+  });
 
   @override
   State<NovelReaderScreen> createState() => _NovelReaderScreenState();
@@ -104,6 +111,9 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
   bool _overlay = false;
   double _fraction = 0;
   Timer? _saveTimer;
+  late String? _highlight = widget.highlight;
+  bool _firstOpen = true;
+  final _hitKey = GlobalKey();
 
   NovelChapter get _chapter => widget.chapters[_index];
   bool get _hasNext => _index < widget.chapters.length - 1;
@@ -131,6 +141,8 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
 
   Future<void> _openChapter(int index) async {
     _savePosition();
+    if (!_firstOpen) _highlight = null; // solo se resalta en el capítulo encontrado
+    _firstOpen = false;
     setState(() {
       _index = index;
       _blocks = null;
@@ -147,6 +159,12 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
       final saved = novels.isRead(widget.work, chapter) ? 0.0 : (novels.position(widget.work, chapter) ?? 0);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_scroll.hasClients) return;
+        final hit = _hitKey.currentContext;
+        if (_highlight != null && hit != null) {
+          Scrollable.ensureVisible(hit, alignment: 0.3);
+          novels.savePosition(widget.work, chapter, novels.position(widget.work, chapter) ?? 0);
+          return;
+        }
         _scroll.jumpTo((_scroll.position.maxScrollExtent * saved).clamp(0, _scroll.position.maxScrollExtent));
         novels.savePosition(widget.work, chapter, saved); // marca este capítulo como el último abierto
       });
@@ -285,6 +303,33 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
     );
   }
 
+  /// Párrafo, con el texto buscado resaltado si lo contiene.
+  Widget _paragraph(String text, TextStyle style, bool light) {
+    final q = _highlight == null ? '' : foldText(_highlight!);
+    final folded = q.isEmpty ? '' : foldText(text);
+    if (q.isEmpty || folded.length != text.length || !folded.contains(q)) {
+      return Text(text, style: style, textAlign: TextAlign.justify);
+    }
+    final spans = <TextSpan>[];
+    var last = 0;
+    for (var i = folded.indexOf(q); i >= 0; i = folded.indexOf(q, i + q.length)) {
+      spans.add(TextSpan(text: text.substring(last, i)));
+      spans.add(
+        TextSpan(
+          text: text.substring(i, i + q.length),
+          style: TextStyle(background: Paint()..color = (light ? Kofu.accent2 : Kofu.accent).withValues(alpha: 0.4)),
+        ),
+      );
+      last = i + q.length;
+    }
+    spans.add(TextSpan(text: text.substring(last)));
+    return Text.rich(
+      TextSpan(children: spans),
+      style: style,
+      textAlign: TextAlign.justify,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = NovelReaderSettings(AppScope.of(context).data);
@@ -292,6 +337,10 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
     final style = settings.style();
     final muted = theme.text.withValues(alpha: 0.55);
     final blocks = _blocks;
+    final q = _highlight == null ? null : foldText(_highlight!);
+    final firstHit = q == null
+        ? null
+        : blocks?.where((b) => !b.heading && !b.separator && foldText(b.text).contains(q)).firstOrNull;
 
     Widget body;
     if (_error != null) {
@@ -350,8 +399,9 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
                       )
                     else
                       Padding(
+                        key: identical(b, firstHit) ? _hitKey : null,
                         padding: EdgeInsets.only(bottom: style.fontSize! * 0.8),
-                        child: Text(b.text, style: style, textAlign: TextAlign.justify),
+                        child: _paragraph(b.text, style, theme.isLight),
                       ),
                   const SizedBox(height: 40),
                   _ChapterEnd(

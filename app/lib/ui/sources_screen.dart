@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../data/app_scope.dart';
 import '../data/app_state.dart';
 import '../data/cover_cache.dart';
+import '../data/extras.dart';
 import '../data/novels.dart';
 import '../data/source.dart';
 import '../data/sync_service.dart';
@@ -54,6 +55,8 @@ class SourcesScreen extends StatelessWidget {
               ),
             ],
           ),
+          const _Header('Inicio'),
+          const _HomeLayoutCard(),
           const _Header('Bibliotecas'),
           const _LibrariesCard(),
           const _Header('Sincronización'),
@@ -95,6 +98,73 @@ class _Card extends StatelessWidget {
     clipBehavior: Clip.antiAlias,
     child: Column(children: children),
   );
+}
+
+/// Orden y visibilidad de las secciones del inicio (se sincroniza).
+class _HomeLayoutCard extends StatelessWidget {
+  const _HomeLayoutCard();
+
+  static const _icons = {
+    HomeSection.continueReading: Icons.play_circle_rounded,
+    HomeSection.upNext: Icons.next_plan_rounded,
+    HomeSection.shortcuts: Icons.apps_rounded,
+    HomeSection.libraries: Icons.collections_bookmark_rounded,
+    HomeSection.complete: Icons.workspace_premium_rounded,
+    HomeSection.lists: Icons.favorite_rounded,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final extras = AppScope.of(context).extras;
+    final layout = extras.homeLayout;
+    return _Card(
+      children: [
+        ReorderableListView(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          onReorderItem: (from, to) {
+            final list = [...layout];
+            final moved = list.removeAt(from);
+            list.insert(to, moved);
+            extras.setHomeLayout(list);
+          },
+          children: [
+            for (final (i, (section, visible)) in layout.indexed)
+              ListTile(
+                key: ValueKey(section),
+                leading: ReorderableDragStartListener(
+                  index: i,
+                  child: const Icon(Icons.drag_indicator_rounded, color: Kofu.muted),
+                ),
+                title: Row(
+                  children: [
+                    Icon(_icons[section], size: 18, color: visible ? Kofu.accent : Kofu.muted),
+                    const SizedBox(width: 10),
+                    Text(section.label, style: TextStyle(color: visible ? null : Kofu.muted)),
+                  ],
+                ),
+                trailing: Switch(
+                  value: visible,
+                  onChanged: (v) {
+                    final list = [...layout];
+                    list[i] = (section, v);
+                    extras.setHomeLayout(list);
+                  },
+                ),
+              ),
+          ],
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 14),
+          child: Text(
+            'Arrastra para cambiar el orden del inicio y desactiva lo que no quieras ver.',
+            style: TextStyle(color: Kofu.muted, fontSize: 12),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// Interruptores para mostrar u ocultar cada biblioteca (se sincroniza entre dispositivos).

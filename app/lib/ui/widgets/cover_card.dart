@@ -59,6 +59,8 @@ class CoverCard extends StatelessWidget {
   final String title;
   final String? subtitle;
   final String? badge;
+  final String? tag; // etiqueta de tipo arriba a la izquierda (p. ej. Novela web)
+  final Color? tagColor;
   final double progress; // 0..1
   final bool read;
   final bool favorite;
@@ -83,6 +85,8 @@ class CoverCard extends StatelessWidget {
     this.onLongPress,
     this.subtitle,
     this.badge,
+    this.tag,
+    this.tagColor,
     this.progress = 0,
     this.read = false,
     this.favorite = false,
@@ -150,6 +154,12 @@ class CoverCard extends StatelessWidget {
                         ),
                         if (badge != null) Positioned(top: 8, right: 8, child: _Pill(text: badge!)),
                         if (complete && !selectionActive) const Positioned(top: 8, left: 8, child: CompleteBadge()),
+                        if (tag != null && !complete && !selectionActive)
+                          Positioned(
+                            top: 8,
+                            left: 8,
+                            child: _TagPill(text: tag!, color: tagColor ?? Kofu.accent2),
+                          ),
                         Positioned(
                           left: 8,
                           bottom: progress > 0 && progress < 1 ? 12 : 8,
@@ -263,6 +273,27 @@ class _Pill extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TagPill extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  const _TagPill({required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+    decoration: BoxDecoration(
+      color: Colors.black.withValues(alpha: 0.6),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: color.withValues(alpha: 0.8)),
+    ),
+    child: Text(
+      text,
+      style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 0.3),
+    ),
+  );
 }
 
 class _Dot extends StatelessWidget {

@@ -9,6 +9,7 @@ import '../komga/komga_client.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'downloads.dart';
+import 'extras.dart';
 import 'novels.dart';
 import 'remote_hub.dart';
 import 'source.dart';
@@ -82,6 +83,8 @@ class AppState extends ChangeNotifier {
     await sync.init();
     await downloads.init();
     downloads.addListener(notifyListeners);
+    await novels.init();
+    novels.addListener(notifyListeners);
     await updater.init();
     updater.addListener(notifyListeners);
     // Buscar actualizaciones sin retrasar el arranque.
@@ -96,6 +99,7 @@ class AppState extends ChangeNotifier {
   final Updater updater = Updater();
   late final RemoteHub remote = RemoteHub(this)..addListener(notifyListeners);
   late final NovelService novels = NovelService(this);
+  late final Extras extras = Extras(this);
   Timer? _pendingTimer;
   AppLifecycleListener? _lifecycle;
 
@@ -236,6 +240,57 @@ class AppState extends ChangeNotifier {
       ..sort((a, b) => (b.book.readDate ?? DateTime(0)).compareTo(a.book.readDate ?? DateTime(0)));
     return all.take(20).toList();
   }
+
+  /// "Te toca": el siguiente capítulo sin empezar de cada serie que estás leyendo,
+  /// juntando todos los servidores (alternando para que ninguno acapare la fila).
+  Future<List<SourcedBook>> upNext() async {
+    final perSource = await Future.wait(
+      sources.where((s) => hasSecret(s.id)).map((source) async {
+        try {
+          final books = await client(source.id).onDeck();
+          return [
+            for (final b in books)
+              if (!isLibraryHidden(source.id, b.libraryId)) SourcedBook(source, b),
+          ];
+        } catch (_) {
+          return <SourcedBook>[];
+        }
+      }),
+    );
+    final out = <SourcedBook>[];
+    for (var i = 0; perSource.any((l) => i < l.length); i++) {
+      for (final l in perSource) {
+        if (i < l.length) out.add(l[i]);
+      }
+    }
+    return out.take(30).toList();
+  }
+
+  /// Novedades: capítulos sin leer de series que sigues, de más nuevo a más antiguo.
+  Future<List<SourcedBook>> news() async {
+    final perSource = await Future.wait(
+      sources.where((s) => hasSecret(s.id)).map((source) async {
+        try {
+          final c = client(source.id);
+          final results = await Future.wait([c.followedSeriesIds(), c.recentUnread()]);
+          final followed = results[0] as Set<String>;
+          return [
+            for (final b in results[1] as List<KomgaBook>)
+              if (followed.contains(b.seriesId) && !isLibraryHidden(source.id, b.libraryId)) SourcedBook(source, b),
+          ];
+        } catch (_) {
+          return <SourcedBook>[];
+        }
+      }),
+    );
+    return perSource.expand((l) => l).toList()
+      ..sort((a, b) => (b.book.created ?? DateTime(0)).compareTo(a.book.created ?? DateTime(0)));
+  }
+
+  /// Cuándo se abrió Novedades por última vez en este dispositivo.
+  DateTime get newsSeenAt => DateTime.fromMillisecondsSinceEpoch(int.tryParse(data.localPref('news_seen') ?? '') ?? 0);
+
+  void markNewsSeen() => data.setLocalPref('news_seen', DateTime.now().millisecondsSinceEpoch.toString());
 
   // ---- Bibliotecas ocultas (se sincroniza entre dispositivos) ----
 

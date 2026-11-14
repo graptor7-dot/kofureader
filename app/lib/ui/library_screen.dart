@@ -8,6 +8,7 @@ import '../data/snapshots.dart';
 import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
+import 'extras_screens.dart';
 import 'list_screen.dart';
 import 'navigation.dart';
 import 'widgets/cover_card.dart';
@@ -37,6 +38,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String? _error;
   String _search = '';
   SeriesSort _sort = SeriesSort.title;
+
+  // Modos locales (sin pedir a Komga): obras valoradas o con una etiqueta.
+  bool _rated = false;
+  String? _tag;
   final Set<ReadStatus> _status = {};
   Timer? _debounce;
   int _generation = 0; // descarta respuestas de consultas anteriores
@@ -186,6 +191,49 @@ class _LibraryScreenState extends State<LibraryScreen> {
     await _reset();
   }
 
+  /// Rejilla de obras valoradas o etiquetadas de esta biblioteca (datos locales).
+  Widget _localGrid(AppState state) {
+    final libraryId = widget.entry.library.id;
+    final items = _rated
+        ? [for (final (s, r) in state.extras.rated(sourceId: _sourceId, libraryId: libraryId)) (s, r)]
+        : [
+            for (final s in state.extras.tagged(_tag!, sourceId: _sourceId, libraryId: libraryId))
+              (s, state.extras.rating(s.ref)),
+          ];
+    final client = state.client(_sourceId);
+    if (items.isEmpty) {
+      return SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.all(40),
+          child: Center(
+            child: Text(
+              _rated ? 'Aún no has valorado nada aquí' : 'Nada con esta etiqueta en esta biblioteca',
+              style: const TextStyle(color: Kofu.muted),
+            ),
+          ),
+        ),
+      );
+    }
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
+      sliver: SliverGrid.builder(
+        gridDelegate: coverGridDelegate,
+        itemCount: items.length,
+        itemBuilder: (context, i) {
+          final (item, stars) = items[i];
+          return CoverCard(
+            imageUrl: client.thumbnailUrl(item.ref),
+            headers: client.authHeaders,
+            title: item.title,
+            subtitle: [if (stars > 0) '★$stars', ?item.seriesTitle].join(' · '),
+            kindIcon: item.ref.kind == ItemKind.book ? Icons.menu_book_rounded : null,
+            onTap: () => openSnapshot(context, item),
+          );
+        },
+      ),
+    );
+  }
+
   void _favoriteSelected() {
     final data = AppScope.read(context).data;
     data.addAll(data.favorites.id, _selection.values.map((s) => s.snapshot(_sourceId)));
@@ -233,6 +281,24 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       PopupMenuItem(value: false, child: Text('Marcar series como no leídas')),
                     ],
                   ),
+                  IconButton(
+                    tooltip: 'Etiquetas',
+                    onPressed: () async {
+                      await showTagsSheet(context, _selection.values.map((s) => s.snapshot(_sourceId)).toList());
+                      _selection.clear();
+                    },
+                    icon: const Icon(Icons.sell_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Añadir al Top 10',
+                    onPressed: () async {
+                      for (final s in _selection.values) {
+                        await addToTop10(context, s.snapshot(_sourceId));
+                      }
+                      _selection.clear();
+                    },
+                    icon: const Icon(Icons.emoji_events_rounded, color: Kofu.gold),
+                  ),
                 ],
               )
             : null,
@@ -261,6 +327,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               name: widget.entry.library.name,
                             ),
                           ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Top 10 de esta biblioteca',
+                      icon: const Icon(Icons.emoji_events_rounded, color: Kofu.gold),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => Top10Screen(initialLibrary: '$_sourceId|${widget.entry.library.id}'),
                         ),
                       ),
                     ),
@@ -324,9 +400,28 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         selected: _status.contains(s),
                         onSelected: (_) => _toggleStatus(s),
                       ),
+                    FilterChip(
+                      avatar: const Icon(Icons.star_rounded, size: 16, color: Kofu.gold),
+                      label: const Text('Mis valoradas'),
+                      selected: _rated,
+                      onSelected: (v) => setState(() {
+                        _rated = v;
+                        if (v) _tag = null;
+                      }),
+                    ),
                   ],
                 ),
               ),
+              SliverToBoxAdapter(
+                child: TagFilterRow(
+                  selected: _tag,
+                  onSelected: (t) => setState(() {
+                    _tag = t;
+                    if (t != null) _rated = false;
+                  }),
+                ),
+              ),
+              if (_rated || _tag != null) _localGrid(state),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
@@ -336,31 +431,35 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                 ),
               ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                sliver: SliverGrid.builder(
-                  gridDelegate: coverGridDelegate,
-                  itemCount: _items.length,
-                  itemBuilder: (context, i) {
-                    final s = _items[i];
-                    final snap = s.snapshot(_sourceId);
-                    return CoverCard(
-                      imageUrl: client.seriesThumbnailUrl(s.id),
-                      headers: client.authHeaders,
-                      title: s.title,
-                      subtitle: '${s.booksCount} libro${s.booksCount == 1 ? '' : 's'}',
-                      badge: s.booksUnreadCount > 0 && s.booksReadCount > 0 ? '${s.booksUnreadCount}' : null,
-                      read: s.booksCount > 0 && s.booksUnreadCount == 0,
-                      progress: s.booksCount > 0 ? s.booksReadCount / s.booksCount : 0,
-                      favorite: state.data.isFavorite(snap.ref),
-                      selected: _selection.contains(s.id),
-                      selectionActive: _selection.active,
-                      onTap: _selection.active ? () => _selection.toggle(s.id, s) : () => _open(s),
-                      onLongPress: () => _selection.toggle(s.id, s),
-                    );
-                  },
+              if (!_rated && _tag == null)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  sliver: SliverGrid.builder(
+                    gridDelegate: coverGridDelegate,
+                    itemCount: _items.length,
+                    itemBuilder: (context, i) {
+                      final s = _items[i];
+                      final snap = s.snapshot(_sourceId);
+                      return CoverCard(
+                        imageUrl: client.seriesThumbnailUrl(s.id),
+                        headers: client.authHeaders,
+                        title: s.title,
+                        subtitle: [
+                          if (state.extras.rating(snap.ref) > 0) '★${state.extras.rating(snap.ref)}',
+                          '${s.booksCount} libro${s.booksCount == 1 ? '' : 's'}',
+                        ].join(' · '),
+                        badge: s.booksUnreadCount > 0 && s.booksReadCount > 0 ? '${s.booksUnreadCount}' : null,
+                        read: s.booksCount > 0 && s.booksUnreadCount == 0,
+                        progress: s.booksCount > 0 ? s.booksReadCount / s.booksCount : 0,
+                        favorite: state.data.isFavorite(snap.ref),
+                        selected: _selection.contains(s.id),
+                        selectionActive: _selection.active,
+                        onTap: _selection.active ? () => _selection.toggle(s.id, s) : () => _open(s),
+                        onLongPress: () => _selection.toggle(s.id, s),
+                      );
+                    },
+                  ),
                 ),
-              ),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(24, 8, 24, 120),

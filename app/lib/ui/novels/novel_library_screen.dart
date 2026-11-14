@@ -10,9 +10,17 @@ import 'novel_work_screen.dart';
 
 /// Portada de una obra (o un marcador con el título si no tiene).
 Widget novelCover(BuildContext context, NovelWork work, {BoxFit fit = BoxFit.cover}) {
-  final novels = AppScope.read(context).novels;
-  if (!work.hasCover) return _NoCover(title: work.title);
-  return KomgaImage.provider(CachedCoverImage(novels.coverUrl(work), headers: novels.headers), fit: fit);
+  final image = novelCoverImage(AppScope.read(context).novels, work);
+  if (image == null) return _NoCover(title: work.title);
+  return KomgaImage.provider(image, fit: fit);
+}
+
+/// Portada descargada si la hay; si no, la de KofuSync (o null si no tiene).
+ImageProvider? novelCoverImage(NovelService novels, NovelWork work) {
+  if (!work.hasCover) return null;
+  final file = novels.offlineCover(work);
+  if (file != null) return FileImage(file);
+  return CachedCoverImage(novels.coverUrl(work), headers: novels.headers);
 }
 
 class _NoCover extends StatelessWidget {
@@ -49,6 +57,15 @@ class _NoCover extends StatelessWidget {
   );
 }
 
+/// Etiqueta corta del tipo de novela según su subcarpeta (Novelas Web → Novela web).
+(String, Color) novelType(String libraryName) {
+  final n = libraryName.toLowerCase();
+  if (n.contains('web')) return ('Novela web', const Color(0xFF2DD4BF));
+  if (n.contains('liger') || n.contains('light')) return ('Novela ligera', const Color(0xFFF472B6));
+  if (n.contains('visual')) return ('Novela visual', const Color(0xFFFBBF24));
+  return (libraryName, Kofu.accent2);
+}
+
 /// La biblioteca "Novelas": todas las obras, con un filtro por subcarpeta
 /// (Novelas Web, Novelas Ligeras…).
 class NovelLibraryScreen extends StatefulWidget {
@@ -77,7 +94,15 @@ class _NovelLibraryScreenState extends State<NovelLibraryScreen> {
     await f;
   }
 
-  void _open(NovelWork w) => Navigator.push(context, MaterialPageRoute(builder: (_) => NovelWorkScreen(work: w)));
+  void _open(NovelWork w) {
+    final lib = widget.libraries.where((l) => l.id == w.lib).firstOrNull;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => NovelWorkScreen(work: w, libraryName: lib?.name),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -185,14 +210,20 @@ class _NovelLibraryScreenState extends State<NovelLibraryScreen> {
                       itemCount: works.length,
                       itemBuilder: (context, i) {
                         final w = works[i];
+                        final lib = widget.libraries.where((l) => l.id == w.lib).firstOrNull;
+                        final type = lib == null ? null : novelType(lib.name);
                         return CoverCard(
                           imageUrl: '',
                           headers: const {},
-                          image: w.hasCover ? CachedCoverImage(novels.coverUrl(w), headers: novels.headers) : null,
+                          image: novelCoverImage(novels, w),
                           placeholder: w.hasCover ? null : _NoCover(title: w.title),
                           title: w.title,
                           subtitle: '${w.chapters} capítulo${w.chapters == 1 ? '' : 's'}',
                           badge: novels.started(w) ? 'Leyendo' : null,
+                          tag: type?.$1,
+                          tagColor: type?.$2,
+                          downloaded: novels.isDownloaded(w),
+                          downloadProgress: novels.downloadProgress(w),
                           onTap: () => _open(w),
                         );
                       },

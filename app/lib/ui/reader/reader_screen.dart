@@ -17,6 +17,7 @@ import '../../theme.dart';
 import '../widgets/cover_card.dart';
 import '../../data/remote_link.dart';
 import '../desktop.dart';
+import '../extras_screens.dart' show showTagsSheet, showRatingDialog, addToTop10;
 import '../widgets/selection.dart' show showToast;
 import '../widgets/list_sheets.dart';
 
@@ -26,7 +27,16 @@ class ReaderScreen extends StatefulWidget {
   final List<KomgaBook> books;
   final int initialIndex;
 
-  const ReaderScreen({super.key, required this.source, required this.books, required this.initialIndex});
+  /// Página en la que abrir el primer libro (p. ej. desde un marcador); si no, la del progreso.
+  final int? startPage;
+
+  const ReaderScreen({
+    super.key,
+    required this.source,
+    required this.books,
+    required this.initialIndex,
+    this.startPage,
+  });
 
   @override
   State<ReaderScreen> createState() => _ReaderScreenState();
@@ -151,7 +161,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final pending = state.downloads.pendingProgress(sourceId, book.id);
       final known = fresh ?? book;
       final int start;
-      if (pending != null) {
+      if (widget.startPage != null && index == widget.initialIndex && !_usedStartPage) {
+        _usedStartPage = true;
+        start = widget.startPage!;
+      } else if (pending != null) {
         start = pending.completed ? 1 : pending.page;
       } else {
         start = known.inProgress ? known.readProgress!.page : 1;
@@ -171,24 +184,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  bool _usedStartPage = false;
+
   /// Libro abierto desde disco (null = se lee de Komga).
   DownloadedBook? _local;
 
   /// Página a tamaño original (de disco o de Komga).
-  ImageProvider _source(int page) {
-    final local = _local;
+  ImageProvider _source(int page, [_Segment? segment]) {
+    final local = segment == null ? _local : segment.local;
     if (local != null) return FileImage(AppScope.read(context).downloads.pageFile(local, page));
-    return NetworkImage(_client.pageUrl(_book.id, page), headers: _client.authHeaders);
+    final book = segment == null ? _book : widget.books[segment.index];
+    return NetworkImage(_client.pageUrl(book.id, page), headers: _client.authHeaders);
   }
 
   /// Página descodificada al tamaño de la pantalla (x1.5 para tener margen al hacer zoom).
   /// Descodificar a tamaño completo ocupa ~20 MB por página y llena la caché enseguida.
-  ImageProvider _image(int page) {
+  ImageProvider _image(int page, [_Segment? segment]) {
     final size = MediaQuery.sizeOf(context);
     final dpr = MediaQuery.devicePixelRatioOf(context);
     if (_mode == ReadingMode.vertical) {
       final width = (size.width.clamp(0, 800) * dpr * 1.25).round();
-      return ResizeImage(_source(page), width: width, allowUpscaling: false);
+      return ResizeImage(_source(page, segment), width: width, allowUpscaling: false);
     }
     return ResizeImage(
       _source(page),
@@ -242,6 +258,62 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
+  // ---- Lectura vertical continua ----
+  //
+  // En vertical, al acercarse al final se encadena el siguiente libro debajo,
+  // sin salir del scroll. Al cruzar al siguiente, el anterior queda leído.
+
+  List<_Segment> _segments = const [];
+  int _segmentsLoadId = -1;
+  bool _appending = false;
+  final _appendFailed = <int>{};
+
+  Future<void> _appendNext() async {
+    if (_appending || _segments.isEmpty) return;
+    final next = _segments.last.index + 1;
+    if (next >= widget.books.length || _appendFailed.contains(next)) return;
+    _appending = true;
+    try {
+      final state = AppScope.read(context);
+      final book = widget.books[next];
+      final mode = await state.effectiveMode(widget.source.id, book.libraryId, book.seriesId);
+      if (mode != ReadingMode.vertical) {
+        _appendFailed.add(next);
+        if (mounted) setState(() {});
+        return;
+      }
+      final local = state.downloads.downloaded(widget.source.id, book.id);
+      final pages = local?.pages ?? await _client.pages(book.id);
+      if (!mounted || _mode != ReadingMode.vertical || _segments.last.index != next - 1) return;
+      if (pages.isEmpty) {
+        setState(() => _appendFailed.add(next));
+        return;
+      }
+      setState(() => _segments = [..._segments, _Segment(next, pages, local)]);
+    } catch (_) {
+      _appendFailed.add(next); // sin conexión: se verá la página de fin de capítulo
+      if (mounted) setState(() {});
+    } finally {
+      _appending = false;
+    }
+  }
+
+  void _onVerticalPage(int segment, int page) {
+    final s = _segments[segment];
+    if (s.index != _index) {
+      // Se ha pasado al libro siguiente (o se ha vuelto al anterior).
+      if (s.index > _index && _pages != null) _pendingSave = _pages!.length;
+      _flushProgress();
+      setState(() {
+        _index = s.index;
+        _pages = s.pages;
+        _local = s.local;
+        _page = 0;
+      });
+    }
+    _onPageChanged(page);
+  }
+
   // ---- Navegación entre libros ----
 
   bool get _hasNext => _index < widget.books.length - 1;
@@ -282,14 +354,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
       );
     } else if (_mode == ReadingMode.vertical) {
       _refreshKeys('v$_loadId');
+      if (_segmentsLoadId != _loadId) {
+        _segmentsLoadId = _loadId;
+        _segments = [_Segment(_index, _pages!, _local)];
+        _appendFailed.clear();
+      }
+      final last = _segments.last.index;
+      final more = last + 1 < widget.books.length && !_appendFailed.contains(last + 1);
       body = _VerticalReader(
         key: _verticalKey,
         image: _image,
-        pages: _pages!,
+        segments: _segments,
+        titles: [for (final s in _segments) widget.books[s.index].title],
         startPage: _startPage,
-        onPageChanged: _onPageChanged,
+        onPageChanged: _onVerticalPage,
+        onNearEnd: _appendNext,
         onTap: () => setState(() => _overlay = !_overlay),
-        endPage: _chapterEnd(),
+        endPage: more
+            ? const Center(child: CircularProgressIndicator(color: Colors.white54))
+            : _ChapterEndPage(
+                finished: widget.books[last],
+                next: last + 1 < widget.books.length ? widget.books[last + 1] : null,
+                onNext: () => _openBook(last + 1),
+                onExit: () => Navigator.maybePop(context),
+              ),
       );
     } else {
       final spreads = _useSpreads;
@@ -463,23 +551,53 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 ),
                 Builder(
                   builder: (context) {
-                    final data = AppScope.of(context).data;
+                    final extras = AppScope.of(context).extras;
                     final snap = _book.snapshot(widget.source.id);
-                    final complete = data.isComplete(snap.ref);
+                    final marked = extras.isBookmarked(snap.ref, _page);
                     return IconButton(
-                      tooltip: complete ? 'Quitar de Ediciones completas' : 'Marcar como edición completa',
-                      onPressed: () => data.setComplete([snap], !complete),
+                      tooltip: marked ? 'Quitar marcador' : 'Guardar esta página',
+                      onPressed: () {
+                        extras.setBookmark(snap, _page, !marked);
+                        showToast(
+                          context,
+                          marked ? 'Marcador quitado' : 'Página $_page guardada en Marcadores',
+                          icon: Icons.bookmark_rounded,
+                        );
+                      },
                       icon: Icon(
-                        complete ? Icons.workspace_premium_rounded : Icons.workspace_premium_outlined,
-                        color: complete ? Kofu.gold : Colors.white,
+                        marked ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+                        color: marked ? Kofu.accent : Colors.white,
                       ),
                     );
                   },
                 ),
-                IconButton(
-                  tooltip: 'Añadir a lista',
-                  onPressed: () => showAddToListSheet(context, [_book.snapshot(widget.source.id)]),
-                  icon: const Icon(Icons.playlist_add_rounded, color: Colors.white),
+                PopupMenuButton<String>(
+                  tooltip: 'Más',
+                  icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
+                  onSelected: (v) {
+                    final snap = _book.snapshot(widget.source.id);
+                    if (v == 'list') showAddToListSheet(context, [snap]);
+                    if (v == 'complete') {
+                      final data = AppScope.read(context).data;
+                      final now = !data.isComplete(snap.ref);
+                      data.setComplete([snap], now);
+                      showToast(
+                        context,
+                        now ? 'Marcado como edición completa' : 'Quitado de Ediciones completas',
+                        icon: Icons.workspace_premium_rounded,
+                      );
+                    }
+                    if (v == 'tags') showTagsSheet(context, [snap]);
+                    if (v == 'rate') showRatingDialog(context, snap);
+                    if (v == 'top') addToTop10(context, snap);
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'list', child: Text('Añadir a lista')),
+                    PopupMenuItem(value: 'complete', child: Text('Edición completa (sí/no)')),
+                    PopupMenuItem(value: 'tags', child: Text('Etiquetas del capítulo')),
+                    PopupMenuItem(value: 'rate', child: Text('Valorar capítulo')),
+                    PopupMenuItem(value: 'top', child: Text('Añadir al Top 10')),
+                  ],
                 ),
                 IconButton(
                   tooltip: 'Filtro nocturno',
@@ -912,20 +1030,33 @@ class _ZoomablePageState extends State<_ZoomablePage> {
 // Modo vertical (webtoon)
 // ---------------------------------------------------------------------------
 
-class _VerticalReader extends StatefulWidget {
-  final ImageProvider Function(int page) image;
+/// Un libro dentro del scroll vertical continuo.
+class _Segment {
+  final int index; // posición en widget.books
   final List<KomgaPageInfo> pages;
-  final int startPage;
-  final ValueChanged<int> onPageChanged;
+  final DownloadedBook? local;
+
+  _Segment(this.index, this.pages, this.local);
+}
+
+class _VerticalReader extends StatefulWidget {
+  final ImageProvider Function(int page, [_Segment? segment]) image;
+  final List<_Segment> segments;
+  final List<String> titles; // título de cada segmento (para el separador)
+  final int startPage; // del primer segmento
+  final void Function(int segment, int page) onPageChanged;
+  final VoidCallback onNearEnd;
   final VoidCallback onTap;
-  final Widget endPage; // fin de capítulo, al final del scroll
+  final Widget endPage; // al final del último segmento
 
   const _VerticalReader({
     super.key,
     required this.image,
-    required this.pages,
+    required this.segments,
+    required this.titles,
     required this.startPage,
     required this.onPageChanged,
+    required this.onNearEnd,
     required this.onTap,
     required this.endPage,
   });
@@ -937,28 +1068,56 @@ class _VerticalReader extends StatefulWidget {
 class _VerticalReaderState extends State<_VerticalReader> {
   static const _maxWidth = 800.0;
   static const _fallbackRatio = 0.7;
+  static const _dividerHeight = 160.0;
   ScrollController? _scroll;
   double _width = 0;
-  List<double> _offsets = const []; // inicio de cada página
+  int _laidOut = 0; // segmentos ya medidos
+
+  // Elementos de la lista, en orden: páginas de cada segmento y un separador entre ellos.
+  final List<(int segment, int page)> _items = []; // page = 0 -> separador
+  final List<double> _offsets = []; // inicio de cada elemento
+  double _end = 0;
 
   double _ratio(KomgaPageInfo p) => p.aspectRatio ?? _fallbackRatio;
 
   void _layout(double width) {
-    if (width == _width) return;
-    _width = width;
-    var acc = 0.0;
-    _offsets = [for (final p in widget.pages) (acc += width / _ratio(p)) - width / _ratio(p)];
-    _scroll ??= ScrollController(initialScrollOffset: _offsets[widget.startPage - 1])..addListener(_onScroll);
+    if (width != _width) {
+      _width = width;
+      _laidOut = 0;
+      _items.clear();
+      _offsets.clear();
+      _end = 0;
+    }
+    for (var s = _laidOut; s < widget.segments.length; s++) {
+      if (s > 0) {
+        _items.add((s, 0));
+        _offsets.add(_end);
+        _end += _dividerHeight;
+      }
+      for (final (i, p) in widget.segments[s].pages.indexed) {
+        _items.add((s, i + 1));
+        _offsets.add(_end);
+        _end += width / _ratio(p);
+      }
+    }
+    _laidOut = widget.segments.length;
+    final start = (widget.startPage - 1).clamp(0, _items.length - 1);
+    _scroll ??= ScrollController(initialScrollOffset: _offsets.isEmpty ? 0 : _offsets[start])..addListener(_onScroll);
   }
 
   void _onScroll() {
     // Página actual = la que ocupa el centro de la pantalla.
-    final center = _scroll!.offset + _scroll!.position.viewportDimension / 2;
-    var page = 1;
+    final scroll = _scroll!;
+    final center = scroll.offset + scroll.position.viewportDimension / 2;
+    var item = 0;
     for (var i = 0; i < _offsets.length; i++) {
-      if (_offsets[i] <= center) page = i + 1;
+      if (_offsets[i] <= center) item = i;
     }
-    widget.onPageChanged(page);
+    var (segment, page) = _items[item];
+    if (page == 0) (segment, page) = _items[item - 1]; // en el separador: aún el anterior
+    widget.onPageChanged(segment, page);
+    // Cerca del final del último libro: encadenar el siguiente.
+    if (scroll.offset + scroll.position.viewportDimension * 4 >= _end) widget.onNearEnd();
   }
 
   final _focus = FocusNode();
@@ -1021,6 +1180,34 @@ class _VerticalReaderState extends State<_VerticalReader> {
     return KeyEventResult.handled;
   }
 
+  /// Separador entre dos libros encadenados.
+  Widget _divider(int segment) => SizedBox(
+    height: _dividerHeight,
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(
+          width: 40,
+          height: 3,
+          decoration: BoxDecoration(gradient: Kofu.accentGradient, borderRadius: BorderRadius.circular(2)),
+        ),
+        const SizedBox(height: 14),
+        const Text('SIGUIENTE', style: TextStyle(color: Colors.white38, fontSize: 11, letterSpacing: 2)),
+        const SizedBox(height: 6),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            widget.titles[segment],
+            maxLines: 2,
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800),
+          ),
+        ),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -1038,15 +1225,18 @@ class _VerticalReaderState extends State<_VerticalReader> {
                 child: ListView.builder(
                   controller: _scroll,
                   scrollCacheExtent: const ScrollCacheExtent.pixels(3000),
-                  itemCount: widget.pages.length + 1,
+                  itemCount: _items.length + 1,
                   itemBuilder: (context, i) {
-                    if (i == widget.pages.length) {
+                    if (i == _items.length) {
                       return SizedBox(height: MediaQuery.sizeOf(context).height * 0.8, child: widget.endPage);
                     }
-                    final p = widget.pages[i];
+                    final (s, page) = _items[i];
+                    if (page == 0) return _divider(s);
+                    final segment = widget.segments[s];
+                    final p = segment.pages[page - 1];
                     return SizedBox(
                       height: width / _ratio(p),
-                      child: KomgaImage.provider(widget.image(p.number), fit: BoxFit.fill, fade: false),
+                      child: KomgaImage.provider(widget.image(p.number, segment), fit: BoxFit.fill, fade: false),
                     );
                   },
                 ),

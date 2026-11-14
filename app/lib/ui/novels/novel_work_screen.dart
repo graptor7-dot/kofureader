@@ -6,14 +6,16 @@ import '../../data/app_scope.dart';
 import '../../data/novels.dart';
 import '../../theme.dart';
 import '../widgets/selection.dart';
-import 'novel_library_screen.dart' show novelCover;
+import 'novel_library_screen.dart' show novelCover, novelType;
+import 'novel_search_screen.dart';
 import 'novel_reader_screen.dart';
 
 /// Ficha de una novela: portada y lista de capítulos (agrupados por volumen si los hay).
 class NovelWorkScreen extends StatefulWidget {
   final NovelWork work;
+  final String? libraryName;
 
-  const NovelWorkScreen({super.key, required this.work});
+  const NovelWorkScreen({super.key, required this.work, this.libraryName});
 
   @override
   State<NovelWorkScreen> createState() => _NovelWorkScreenState();
@@ -30,14 +32,56 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
     await f;
   }
 
-  Future<void> _open(List<NovelChapter> chapters, int index) async {
+  Future<void> _open(List<NovelChapter> chapters, int index, {String? highlight}) async {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => NovelReaderScreen(work: widget.work, chapters: chapters, initialIndex: index),
+        builder: (_) =>
+            NovelReaderScreen(work: widget.work, chapters: chapters, initialIndex: index, highlight: highlight),
       ),
     );
     if (mounted) setState(() {}); // refrescar marcas de leído
+  }
+
+  Future<void> _search(List<NovelChapter> chapters) async {
+    final hit = await Navigator.push<(String, String)>(
+      context,
+      MaterialPageRoute(builder: (_) => NovelSearchScreen(work: widget.work)),
+    );
+    if (hit == null || !mounted) return;
+    final i = chapters.indexWhere((c) => c.id == hit.$1);
+    if (i >= 0) _open(chapters, i, highlight: hit.$2);
+  }
+
+  Future<void> _toggleDownload() async {
+    final novels = AppScope.read(context).novels;
+    final work = widget.work;
+    if (novels.downloadProgress(work) != null) return;
+    if (novels.isDownloaded(work)) {
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Novela descargada'),
+          content: const Text('Puedes leerla sin conexión. ¿Quieres actualizarla con los capítulos nuevos o borrarla?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, 'delete'), child: const Text('Borrar')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, 'update'), child: const Text('Actualizar')),
+          ],
+        ),
+      );
+      if (choice == 'delete') {
+        await novels.removeDownload(work);
+        if (mounted) showToast(context, 'Descarga borrada');
+        return;
+      }
+      if (choice != 'update') return;
+    }
+    try {
+      await novels.download(work, libName: widget.libraryName);
+      if (mounted) showToast(context, 'Lista para leer sin conexión');
+    } catch (e) {
+      if (mounted) showToast(context, 'No se pudo descargar: $e');
+    }
   }
 
   /// Último capítulo abierto; si no, el primero sin leer; si no, el primero.
@@ -120,6 +164,29 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
                   pinned: true,
                   expandedHeight: 330,
                   title: Text(work.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  actions: [
+                    if (chapters != null && chapters.isNotEmpty)
+                      IconButton(
+                        tooltip: 'Buscar en la novela',
+                        icon: const Icon(Icons.manage_search_rounded),
+                        onPressed: () => _search(chapters),
+                      ),
+                    IconButton(
+                      tooltip: novels.isDownloaded(work) ? 'Descargada' : 'Descargar para leer sin conexión',
+                      onPressed: _toggleDownload,
+                      icon: switch (novels.downloadProgress(work)) {
+                        final double p => SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(value: p == 0 ? null : p, strokeWidth: 2.5),
+                        ),
+                        null when novels.isDownloaded(work) => const Icon(
+                          Icons.download_done_rounded,
+                          color: Kofu.read,
+                        ),
+                        null => const Icon(Icons.download_rounded),
+                      },
+                    ),
+                  ],
                   flexibleSpace: FlexibleSpaceBar(
                     collapseMode: CollapseMode.parallax,
                     background: Stack(
@@ -165,9 +232,22 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     mainAxisAlignment: MainAxisAlignment.end,
                                     children: [
-                                      Text(
-                                        work.lib,
-                                        style: const TextStyle(color: Kofu.accent2, fontWeight: FontWeight.w700),
+                                      Builder(
+                                        builder: (context) {
+                                          final (label, color) = novelType(widget.libraryName ?? work.lib);
+                                          return Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                            decoration: BoxDecoration(
+                                              color: color.withValues(alpha: 0.15),
+                                              borderRadius: BorderRadius.circular(8),
+                                              border: Border.all(color: color.withValues(alpha: 0.7)),
+                                            ),
+                                            child: Text(
+                                              label,
+                                              style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 12),
+                                            ),
+                                          );
+                                        },
                                       ),
                                       const SizedBox(height: 6),
                                       Text(

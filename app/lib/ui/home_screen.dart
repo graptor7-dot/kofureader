@@ -2,11 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../data/app_scope.dart';
 import '../data/app_state.dart';
+import '../data/cover_cache.dart';
+import '../data/extras.dart';
 import '../data/novels.dart';
 import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'downloads_screen.dart';
+import 'extras_screens.dart';
+import 'novels/novel_reader_screen.dart';
+import 'stats_screen.dart';
 import 'history_screen.dart';
 import 'library_screen.dart';
 import 'novels/novel_library_screen.dart';
@@ -51,6 +56,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   Future<List<SourceLibraries>>? _libraries;
   Future<List<SourcedBook>>? _continue;
+  Future<List<SourcedBook>>? _upNext;
+  Future<({List<NovelProgress> reading, List<NovelProgress> upNext})>? _novelProgress;
+  Future<int>? _newsCount;
   Future<List<NovelLibrary>>? _novelLibs;
   List<NovelLibrary> _novelLibList = const [];
   Future<List<NovelWork>>? _novelPreview;
@@ -90,6 +98,12 @@ class _HomeScreenState extends State<HomeScreen> {
     _previews.clear();
     _libraries = state.loadAllLibraries(refresh: refresh);
     _continue = state.continueReading();
+    _upNext = state.upNext();
+    _novelProgress = state.novels.progress().catchError((_) => (reading: <NovelProgress>[], upNext: <NovelProgress>[]));
+    _newsCount = state
+        .news()
+        .then((n) => n.where((b) => (b.book.created ?? DateTime(0)).isAfter(state.newsSeenAt)).length)
+        .catchError((_) => 0);
     _novelPreview = null;
     _novelLibs = state.novels.available
         ? state.novels.libraries().catchError((_) => <NovelLibrary>[])
@@ -107,7 +121,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _refreshContinue() {
-    if (mounted) setState(() => _continue = AppScope.read(context).continueReading());
+    if (!mounted) return;
+    final state = AppScope.read(context);
+    setState(() {
+      _continue = state.continueReading();
+      _upNext = state.upNext();
+      _novelProgress = state.novels.progress().catchError(
+        (_) => (reading: <NovelProgress>[], upNext: <NovelProgress>[]),
+      );
+    });
   }
 
   Future<List<KomgaSeries>> _preview(LibraryEntry e) => _previews.putIfAbsent(
@@ -272,20 +294,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (!_selection.active) _header(),
                   const SliverToBoxAdapter(child: UpdateBanner()),
                   if (state.remote.castTarget != null) const SliverToBoxAdapter(child: _CastBanner()),
-                  _continueSection(),
-                  _sectionTitle('Bibliotecas'),
-                  if (groups == null)
-                    const SliverToBoxAdapter(
-                      child: Padding(
-                        padding: EdgeInsets.all(40),
-                        child: Center(child: CircularProgressIndicator()),
-                      ),
-                    )
-                  else
-                    _librariesGrid(groups),
-                  _completeSection(state),
-                  _sectionTitle('Listas'),
-                  _listsGrid(state, groups == null ? const [] : _visibleLibraries(groups)),
+                  // Secciones en el orden elegido en Ajustes → Personalizar inicio.
+                  for (final (section, visible) in state.extras.homeLayout)
+                    if (visible) ..._section(section, state, groups),
                   const SliverToBoxAdapter(child: SizedBox(height: 120)),
                 ],
               ),
@@ -360,14 +371,100 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   );
 
-  Widget _continueSection() {
+  /// Las piezas (slivers) de una sección del inicio.
+  List<Widget> _section(HomeSection section, AppState state, List<SourceLibraries>? groups) {
+    switch (section) {
+      case HomeSection.continueReading:
+        return [_progressRow(upNext: false)];
+      case HomeSection.upNext:
+        return [_progressRow(upNext: true)];
+      case HomeSection.shortcuts:
+        return [_shortcuts()];
+      case HomeSection.libraries:
+        return [
+          _sectionTitle('Bibliotecas'),
+          if (groups == null)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(40),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            )
+          else
+            _librariesGrid(groups),
+        ];
+      case HomeSection.complete:
+        return [_completeSection(state)];
+      case HomeSection.lists:
+        return [_sectionTitle('Listas'), _listsGrid(state, groups == null ? const [] : _visibleLibraries(groups))];
+    }
+  }
+
+  /// "Seguir leyendo" (capítulos a medias) o "Te toca" (siguiente sin empezar),
+  /// con cómics y novelas juntos, del más reciente al más antiguo.
+  Widget _progressRow({required bool upNext}) {
     return SliverToBoxAdapter(
-      child: FutureBuilder<List<SourcedBook>>(
-        future: _continue,
+      child: FutureBuilder<List<Object>>(
+        future: Future.wait<Object>([
+          (upNext ? _upNext : _continue) ?? Future.value(const <SourcedBook>[]),
+          _novelProgress ?? Future.value((reading: <NovelProgress>[], upNext: <NovelProgress>[])),
+        ]),
         builder: (context, snap) {
           final state = AppScope.of(context);
-          final books = snap.data?.where((b) => !state.isLibraryHidden(b.source.id, b.book.libraryId)).toList();
-          if (books == null || books.isEmpty) return const SizedBox.shrink();
+          if (!snap.hasData) return const SizedBox.shrink();
+          final books = (snap.data![0] as List<SourcedBook>)
+              .where((b) => !state.isLibraryHidden(b.source.id, b.book.libraryId))
+              .toList();
+          final novelsAll = snap.data![1] as ({List<NovelProgress> reading, List<NovelProgress> upNext});
+          final novels = upNext ? novelsAll.upNext : novelsAll.reading;
+          // Se mezclan por fecha de lectura ("Te toca" de cómics no trae fecha: van primero los de Komga).
+          final items = <(DateTime, Widget)>[
+            for (final (i, b) in books.indexed)
+              (
+                upNext ? DateTime(9999).subtract(Duration(minutes: i)) : (b.book.readDate ?? DateTime(2000)),
+                _ComicProgressCard(
+                  item: b,
+                  upNext: upNext,
+                  onTap: () async {
+                    await openBook(context, b.source, b.book.id, seriesId: b.book.seriesId);
+                    _refreshContinue();
+                  },
+                  onMarkRead: () async {
+                    try {
+                      await state.client(b.source.id).setBookRead(b.book.id, true);
+                      state.downloads.discardPendingProgress(b.source.id, b.book.id);
+                      if (context.mounted) showToast(context, 'Marcado como leído', icon: Icons.done_all_rounded);
+                    } catch (e) {
+                      if (context.mounted) showToast(context, '$e', icon: Icons.error_outline);
+                    }
+                    _refreshContinue();
+                  },
+                ),
+              ),
+            for (final n in novels)
+              (
+                n.at,
+                _ProgressCard.novel(
+                  item: n,
+                  upNext: upNext,
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => NovelReaderScreen(work: n.work, chapters: n.chapters, initialIndex: n.index),
+                      ),
+                    );
+                    _refreshContinue();
+                  },
+                  onMarkRead: () {
+                    state.novels.setRead(n.work, n.chapter, true);
+                    showToast(context, 'Marcado como leído', icon: Icons.done_all_rounded);
+                    _refreshContinue();
+                  },
+                ),
+              ),
+          ]..sort((a, b) => b.$1.compareTo(a.$1));
+          if (items.isEmpty) return const SizedBox.shrink();
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -375,39 +472,101 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
                 child: Row(
                   children: [
+                    if (upNext) ...[const Icon(Icons.next_plan_rounded, color: Kofu.accent2), const SizedBox(width: 8)],
                     Expanded(
                       child: Text(
-                        'Seguir leyendo',
+                        upNext ? 'Te toca' : 'Seguir leyendo',
                         style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
                       ),
-                    ),
-                    TextButton.icon(
-                      onPressed: _openHistory,
-                      icon: const Icon(Icons.history_rounded, size: 18),
-                      label: const Text('Historial'),
                     ),
                   ],
                 ),
               ),
               SizedBox(
-                height: 150,
+                height: 158,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 20),
-                  itemCount: books.length,
+                  itemCount: items.length,
                   separatorBuilder: (_, _) => const SizedBox(width: 14),
-                  itemBuilder: (context, i) => _ContinueCard(
-                    item: books[i],
-                    onTap: () async {
-                      await openBook(context, books[i].source, books[i].book.id, seriesId: books[i].book.seriesId);
-                      _refreshContinue();
-                    },
-                  ),
+                  itemBuilder: (context, i) => items[i].$2,
                 ),
               ),
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Fila compacta de accesos: así el inicio no se llena de tarjetas.
+  Widget _shortcuts() {
+    Future<void> go(Widget screen) async {
+      await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+      _refreshContinue();
+    }
+
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.only(top: 20),
+        child: SizedBox(
+          height: 86,
+          child: FutureBuilder<int>(
+            future: _newsCount,
+            builder: (context, snap) => ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              children: [
+                _Shortcut(
+                  icon: Icons.fiber_new_rounded,
+                  label: 'Novedades',
+                  color: const Color(0xFF34D399),
+                  badge: (snap.data ?? 0) > 0 ? '${snap.data}' : null,
+                  onTap: () async {
+                    await go(const NewsScreen());
+                    if (mounted) setState(() => _newsCount = Future.value(0));
+                  },
+                ),
+                _Shortcut(
+                  icon: Icons.history_rounded,
+                  label: 'Historial',
+                  color: const Color(0xFF38BDF8),
+                  onTap: _openHistory,
+                ),
+                _Shortcut(
+                  icon: Icons.emoji_events_rounded,
+                  label: 'Top 10',
+                  color: Kofu.gold,
+                  onTap: () => go(const Top10Screen()),
+                ),
+                _Shortcut(
+                  icon: Icons.bookmark_rounded,
+                  label: 'Marcadores',
+                  color: Kofu.accent,
+                  onTap: () => go(const BookmarksScreen()),
+                ),
+                _Shortcut(
+                  icon: Icons.sell_rounded,
+                  label: 'Etiquetas',
+                  color: Kofu.accent2,
+                  onTap: () => go(const TagsScreen()),
+                ),
+                _Shortcut(
+                  icon: Icons.download_for_offline_rounded,
+                  label: 'Descargas',
+                  color: Kofu.read,
+                  onTap: () => go(const DownloadsScreen()),
+                ),
+                _Shortcut(
+                  icon: Icons.insights_rounded,
+                  label: 'Estadísticas',
+                  color: const Color(0xFFF97316),
+                  onTap: () => go(const StatsScreen()),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -492,7 +651,7 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisSpacing: 16,
           mainAxisSpacing: 16,
         ),
-        itemCount: 1 + favCount + lists.length + 3,
+        itemCount: 1 + favCount + lists.length + 1,
         itemBuilder: (context, index) {
           if (index == 0) {
             return _CompleteCard(count: state.visibleItemsOf(UserData.completeId).length, onTap: _openComplete);
@@ -527,17 +686,6 @@ class _HomeScreenState extends State<HomeScreen> {
           }
           final i = index - favCount;
           if (i == lists.length) {
-            return _DownloadsCard(
-              onTap: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => const DownloadsScreen()));
-                _refreshContinue();
-              },
-            );
-          }
-          if (i == lists.length + 1) {
-            return _HistoryCard(onTap: _openHistory);
-          }
-          if (i == lists.length + 2) {
             return _NewListCard(
               onTap: () async {
                 final name = await askListName(context);
@@ -615,19 +763,121 @@ class _Welcome extends StatelessWidget {
   }
 }
 
-class _ContinueCard extends StatelessWidget {
-  final SourcedBook item;
+/// Acceso de la fila de atajos.
+class _Shortcut extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final String? badge;
   final VoidCallback onTap;
 
-  const _ContinueCard({required this.item, required this.onTap});
+  const _Shortcut({required this.icon, required this.label, required this.color, required this.onTap, this.badge});
 
   @override
   Widget build(BuildContext context) {
-    final client = AppScope.read(context).client(item.source.id);
-    final b = item.book;
-    final page = b.readProgress?.page ?? 0;
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: Material(
+        color: Kofu.surface,
+        borderRadius: BorderRadius.circular(Kofu.radius + 2),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(Kofu.radius + 2),
+          onTap: onTap,
+          child: SizedBox(
+            width: 92,
+            child: Stack(
+              children: [
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(color: color.withValues(alpha: 0.16), shape: BoxShape.circle),
+                        child: Icon(icon, color: color, size: 22),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+                if (badge != null)
+                  Positioned(
+                    top: 6,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+                      child: Text(
+                        badge!,
+                        style: const TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tarjeta de "Seguir leyendo" / "Te toca", para un capítulo de cómic o de novela.
+class _ProgressCard extends StatelessWidget {
+  final ImageProvider? image;
+  final Widget? fallback;
+  final String series;
+  final String chapter;
+  final String libraryLabel;
+  final Color libraryColor;
+  final String status;
+  final double progress;
+  final bool upNext;
+  final VoidCallback onTap;
+  final VoidCallback onMarkRead;
+
+  const _ProgressCard({
+    required this.image,
+    required this.series,
+    required this.chapter,
+    required this.libraryLabel,
+    required this.libraryColor,
+    required this.status,
+    required this.progress,
+    required this.upNext,
+    required this.onTap,
+    required this.onMarkRead,
+    this.fallback,
+  });
+
+  factory _ProgressCard.novel({
+    required NovelProgress item,
+    required bool upNext,
+    required VoidCallback onTap,
+    required VoidCallback onMarkRead,
+  }) => _ProgressCard(
+    image: null,
+    fallback: _NovelThumb(work: item.work),
+    series: item.work.title,
+    chapter: item.chapter.label,
+    libraryLabel: item.work.lib,
+    libraryColor: Kofu.accent2,
+    status: upNext
+        ? 'Capítulo ${item.index + 1} de ${item.chapters.length}'
+        : '${(item.fraction * 100).round()} % leído',
+    progress: upNext ? 0 : item.fraction,
+    upNext: upNext,
+    onTap: onTap,
+    onMarkRead: onMarkRead,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final cover = image != null ? KomgaImage.provider(image!) : (fallback ?? const SizedBox());
     return SizedBox(
-      width: 320,
+      width: 330,
       child: Material(
         color: Kofu.surface,
         borderRadius: BorderRadius.circular(Kofu.radius + 4),
@@ -636,13 +886,7 @@ class _ContinueCard extends StatelessWidget {
           onTap: onTap,
           child: Stack(
             children: [
-              // Fondo: la propia portada muy difuminada por el degradado.
-              Positioned.fill(
-                child: Opacity(
-                  opacity: 0.18,
-                  child: KomgaImage(url: client.bookThumbnailUrl(b.id), headers: client.authHeaders),
-                ),
-              ),
+              if (image != null) Positioned.fill(child: Opacity(opacity: 0.16, child: cover)),
               const Positioned.fill(
                 child: DecoratedBox(
                   decoration: BoxDecoration(
@@ -657,55 +901,83 @@ class _ContinueCard extends StatelessWidget {
                     padding: const EdgeInsets.all(10),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(10),
-                      child: SizedBox(
-                        width: 88,
-                        child: KomgaImage(url: client.bookThumbnailUrl(b.id), headers: client.authHeaders),
-                      ),
+                      child: SizedBox(width: 88, child: cover),
                     ),
                   ),
                   Expanded(
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(6, 16, 16, 16),
+                      padding: const EdgeInsets.fromLTRB(4, 12, 4, 12),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          // Etiqueta de la biblioteca de origen.
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: libraryColor.withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              libraryLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: libraryColor, fontSize: 10, fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
                           Text(
-                            b.seriesTitle,
-                            maxLines: 2,
+                            series,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 2),
                           Text(
-                            b.title,
-                            maxLines: 1,
+                            chapter,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Kofu.muted, fontSize: 13),
+                            style: const TextStyle(color: Kofu.muted, fontSize: 12),
                           ),
                           const Spacer(),
                           Row(
                             children: [
-                              const Icon(Icons.play_circle_fill_rounded, color: Kofu.accent, size: 18),
+                              Icon(
+                                upNext ? Icons.skip_next_rounded : Icons.play_circle_fill_rounded,
+                                color: upNext ? Kofu.accent2 : Kofu.accent,
+                                size: 18,
+                              ),
                               const SizedBox(width: 6),
-                              Text(
-                                'Pág. $page de ${b.pagesCount}',
-                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                              Expanded(
+                                child: Text(
+                                  status,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                                ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: b.progressFraction,
-                              minHeight: 5,
-                              backgroundColor: Kofu.surfaceHigh,
-                              color: Kofu.accent,
+                          if (progress > 0) ...[
+                            const SizedBox(height: 6),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(4),
+                              child: LinearProgressIndicator(
+                                value: progress,
+                                minHeight: 4,
+                                backgroundColor: Kofu.surfaceHigh,
+                                color: Kofu.accent,
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
+                  ),
+                  // Marcar como leído sin abrirlo.
+                  IconButton(
+                    tooltip: 'Marcar como leído',
+                    onPressed: onMarkRead,
+                    icon: const Icon(Icons.done_all_rounded, color: Kofu.muted),
                   ),
                 ],
               ),
@@ -715,6 +987,45 @@ class _ContinueCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// [_ProgressCard] de un capítulo de cómic: portada, biblioteca y progreso de Komga.
+class _ComicProgressCard extends StatelessWidget {
+  final SourcedBook item;
+  final bool upNext;
+  final VoidCallback onTap;
+  final VoidCallback onMarkRead;
+
+  const _ComicProgressCard({required this.item, required this.upNext, required this.onTap, required this.onMarkRead});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppScope.read(context);
+    final client = state.client(item.source.id);
+    final b = item.book;
+    final lib = state.libraryName(item.source.id, b.libraryId);
+    return _ProgressCard(
+      image: CachedCoverImage(client.bookThumbnailUrl(b.id), headers: client.authHeaders),
+      series: b.seriesTitle,
+      chapter: b.title,
+      libraryLabel: lib == null ? item.source.name : '$lib · ${item.source.name}',
+      libraryColor: state.sourceColor(item.source.id),
+      status: upNext ? '${b.pagesCount} páginas' : 'Pág. ${b.readProgress?.page ?? 0} de ${b.pagesCount}',
+      progress: upNext ? 0 : b.progressFraction,
+      upNext: upNext,
+      onTap: onTap,
+      onMarkRead: onMarkRead,
+    );
+  }
+}
+
+class _NovelThumb extends StatelessWidget {
+  final NovelWork work;
+
+  const _NovelThumb({required this.work});
+
+  @override
+  Widget build(BuildContext context) => novelCover(context, work);
 }
 
 /// Tarjeta ancha de biblioteca con un collage de portadas recientes.
@@ -1097,112 +1408,6 @@ class _CompleteCard extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HistoryCard extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const _HistoryCard({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(Kofu.radius + 4);
-    return Material(
-      color: Kofu.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: radius,
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Stack(
-          children: [
-            Positioned(
-              right: -20,
-              bottom: -20,
-              child: Icon(Icons.history_rounded, size: 120, color: const Color(0xFF38BDF8).withValues(alpha: 0.12)),
-            ),
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.history_rounded, color: Color(0xFF38BDF8)),
-                  Spacer(),
-                  Text('Historial', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                  SizedBox(height: 2),
-                  Text('Todo lo que has leído', style: TextStyle(fontSize: 12, color: Kofu.muted)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DownloadsCard extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const _DownloadsCard({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final state = AppScope.of(context);
-    final downloads = state.downloads;
-    final visible = downloads.all.where((b) => !state.isLibraryHidden(b.sourceId, b.libraryId)).toList();
-    final count = visible.length;
-    final bytes = visible.fold(0, (a, b) => a + b.sizeBytes);
-    final queued = downloads.queuedCount;
-    final radius = BorderRadius.circular(Kofu.radius + 4);
-    return Material(
-      color: Kofu.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: radius,
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Stack(
-          children: [
-            Positioned(
-              right: -20,
-              bottom: -20,
-              child: Icon(Icons.download_for_offline_rounded, size: 120, color: Kofu.read.withValues(alpha: 0.12)),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  queued > 0
-                      ? const SizedBox.square(
-                          dimension: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Kofu.read),
-                        )
-                      : const Icon(Icons.download_done_rounded, color: Kofu.read),
-                  const Spacer(),
-                  const Text('Descargas', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 2),
-                  Text(
-                    queued > 0
-                        ? '$count libros · $queued en cola'
-                        : count == 0
-                        ? 'Para leer sin conexión'
-                        : '$count libro${count == 1 ? '' : 's'} · ${formatBytes(bytes)}',
-                    style: const TextStyle(fontSize: 12, color: Kofu.muted),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ),
       ),
     );

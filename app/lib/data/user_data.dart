@@ -44,6 +44,24 @@ class ItemSnapshot {
     this.seriesId,
     this.seriesTitle,
   });
+
+  Map<String, dynamic> toJson() => {
+    'sourceId': ref.sourceId,
+    'kind': ref.kind.name,
+    'komgaId': ref.komgaId,
+    'title': title,
+    'libraryId': libraryId,
+    'seriesId': seriesId,
+    'seriesTitle': seriesTitle,
+  };
+
+  factory ItemSnapshot.fromJson(Map<String, dynamic> j) => ItemSnapshot(
+    ref: ItemRef(j['sourceId'] as String, ItemKind.values.byName(j['kind'] as String), j['komgaId'] as String),
+    title: j['title'] as String? ?? '',
+    libraryId: j['libraryId'] as String? ?? '',
+    seriesId: j['seriesId'] as String?,
+    seriesTitle: j['seriesTitle'] as String?,
+  );
 }
 
 /// Un servidor Komga con sus metadatos de sincronización.

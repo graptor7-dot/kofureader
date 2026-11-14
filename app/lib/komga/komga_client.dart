@@ -121,6 +121,27 @@ class KomgaClient {
     return KomgaPage.fromJson(json as Map<String, dynamic>, KomgaBook.fromJson).content;
   }
 
+  /// "Te toca": siguiente capítulo sin empezar de series que estás leyendo (Komga "on deck").
+  Future<List<KomgaBook>> onDeck({int size = 20}) async {
+    final json = await _get('/books/ondeck', {'page': 0, 'size': size});
+    return KomgaPage.fromJson(json as Map<String, dynamic>, KomgaBook.fromJson).content;
+  }
+
+  /// Ids de las series que estás siguiendo (con algo leído y algo pendiente).
+  Future<Set<String>> followedSeriesIds() async {
+    final json = await _get('/series', {'read_status': 'IN_PROGRESS', 'size': 1000, 'page': 0});
+    return KomgaPage.fromJson(json as Map<String, dynamic>, KomgaSeries.fromJson).content.map((s) => s.id).toSet();
+  }
+
+  /// Capítulos sin leer más recientes del servidor (para Novedades).
+  Future<List<KomgaBook>> recentUnread({int size = 200}) async {
+    final json = await _get('/books', {'read_status': 'UNREAD', 'sort': 'createdDate,desc', 'size': size, 'page': 0});
+    return KomgaPage.fromJson(json as Map<String, dynamic>, KomgaBook.fromJson).content;
+  }
+
+  /// Miniatura de una página (para los marcadores).
+  String pageThumbnailUrl(String bookId, int page) => _uri('/books/$bookId/pages/$page/thumbnail').toString();
+
   /// Historial: libros empezados o leídos, del más reciente al más antiguo.
   Future<KomgaPage<KomgaBook>> readHistory({int page = 0, int size = 40, Set<ReadStatus>? status}) async {
     final json = await _get('/books', {

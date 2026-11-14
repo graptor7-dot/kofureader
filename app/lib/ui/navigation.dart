@@ -19,7 +19,7 @@ Future<void> openSeries(BuildContext context, Source source, String seriesId, {K
 }
 
 /// Abre un libro suelto: carga su serie para poder pasar al siguiente/anterior.
-Future<void> openBook(BuildContext context, Source source, String bookId, {String? seriesId}) async {
+Future<void> openBook(BuildContext context, Source source, String bookId, {String? seriesId, int? page}) async {
   final state = AppScope.read(context);
   final client = state.client(source.id);
   showDialog(
@@ -54,19 +54,19 @@ Future<void> openBook(BuildContext context, Source source, String bookId, {Strin
   if (!context.mounted) return;
   Navigator.pop(context);
   final index = books.indexWhere((b) => b.id == bookId);
-  await startReading(context, source, books, index < 0 ? 0 : index);
+  await startReading(context, source, books, index < 0 ? 0 : index, page: page);
 }
 
 /// Abre el lector, o, si se está eligiendo qué leer en la tele, lo envía a la tele
 /// y muestra el mando.
-Future<void> startReading(BuildContext context, Source source, List<KomgaBook> books, int index) async {
+Future<void> startReading(BuildContext context, Source source, List<KomgaBook> books, int index, {int? page}) async {
   final hub = AppScope.read(context).remote;
   final tvId = hub.castTarget;
   if (tvId == null) {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ReaderScreen(source: source, books: books, initialIndex: index),
+        builder: (_) => ReaderScreen(source: source, books: books, initialIndex: index, startPage: page),
       ),
     );
     return;

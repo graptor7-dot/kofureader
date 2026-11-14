@@ -97,6 +97,7 @@ class KomgaBook {
   final String number;
   final int pagesCount;
   final KomgaReadProgress? readProgress;
+  final DateTime? created; // cuándo se añadió a Komga
 
   KomgaBook({
     required this.id,
@@ -107,6 +108,7 @@ class KomgaBook {
     required this.number,
     required this.pagesCount,
     required this.readProgress,
+    this.created,
   });
 
   bool get isRead => readProgress?.completed ?? false;
@@ -139,6 +141,7 @@ class KomgaBook {
       title: (meta['title'] as String?) ?? j['name'] as String,
       number: (meta['number'] as String?) ?? '${j['number'] ?? ''}',
       pagesCount: media['pagesCount'] as int? ?? 0,
+      created: DateTime.tryParse(j['created'] as String? ?? ''),
       readProgress: rp == null
           ? null
           : KomgaReadProgress(
