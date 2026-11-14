@@ -9,11 +9,13 @@
 //   KOFUSYNC_TOKEN  (obligatoria) token que deben enviar los clientes
 //   KOFUSYNC_DATA   carpeta de datos (por defecto /data)
 //   KOFUSYNC_PORT   puerto (por defecto 8080)
+//   KOFUSYNC_NOVELS carpeta de novelas (por defecto /novels)
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+part 'novels.dart';
 part 'tv.dart';
 part 'tv_page.dart';
 
@@ -38,6 +40,7 @@ Future<void> main() async {
   _file = File('${dataDir.path}/kofusync.json');
   await _load();
   await _loadTv(dataDir);
+  _initNovels();
 
   final port = int.tryParse(env['KOFUSYNC_PORT'] ?? '') ?? 8080;
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
@@ -96,8 +99,9 @@ Future<void> _handle(HttpRequest req) async {
   try {
     final path = req.uri.path;
     if (req.method == 'GET' && path == '/health') {
-      return _json(req, 200, {'ok': true, 'version': 2, 'remote': true});
+      return _json(req, 200, {'ok': true, 'version': 3, 'remote': true, 'novels': true});
     }
+    if (req.method == 'GET' && (path == '/novels' || path.startsWith('/novels/'))) return await _novels(req);
     if (req.method == 'GET' && (path == '/tv' || path == '/tv/')) return _tvHtml(req);
     if (req.method == 'GET' && path == '/tv/page') return await _tvPage(req);
     if (path == '/tvws' && WebSocketTransformer.isUpgradeRequest(req)) {

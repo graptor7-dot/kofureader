@@ -9,6 +9,8 @@ services:
       - KOFUSYNC_TOKEN=${KOFUSYNC_TOKEN}
     volumes:
       - kofusync-data:/data
+      # Opcional: carpeta de novelas (cada subcarpeta es una biblioteca), solo lectura.
+      # - /ruta/a/Novelas:/novels:ro
     ports:
       # No abras este puerto en el router: se accede por Tailscale o desde casa.
       - "49200:8080"

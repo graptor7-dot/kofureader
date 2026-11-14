@@ -143,7 +143,7 @@ class _ListScreenState extends State<ListScreen> {
                 pinned: true,
                 expandedHeight: 190,
                 actions: [
-                  if (!list.isFavorites)
+                  if (!list.isSpecial)
                     PopupMenuButton<String>(
                       onSelected: (v) => v == 'rename' ? _rename(list) : _delete(list),
                       itemBuilder: (_) => const [
@@ -166,7 +166,18 @@ class _ListScreenState extends State<ListScreen> {
                     children: [
                       DecoratedBox(
                         decoration: BoxDecoration(
-                          gradient: list.isFavorites
+                          gradient: list.isComplete
+                              ? LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Kofu.gold.withValues(alpha: 0.6),
+                                    const Color(0xFFE09A2B).withValues(alpha: 0.25),
+                                    Kofu.background,
+                                  ],
+                                  stops: const [0, 0.55, 1],
+                                )
+                              : list.isFavorites
                               ? LinearGradient(
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomCenter,
@@ -188,7 +199,11 @@ class _ListScreenState extends State<ListScreen> {
                         right: 24,
                         bottom: 24,
                         child: Icon(
-                          list.isFavorites ? Icons.favorite_rounded : Icons.collections_bookmark_rounded,
+                          list.isComplete
+                              ? Icons.workspace_premium_rounded
+                              : list.isFavorites
+                              ? Icons.favorite_rounded
+                              : Icons.collections_bookmark_rounded,
                           size: 96,
                           color: Colors.white.withValues(alpha: 0.12),
                         ),
@@ -240,7 +255,9 @@ class _ListScreenState extends State<ListScreen> {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        list.isFavorites
+                        list.isComplete
+                            ? 'Selecciona tomos recopilatorios en una serie y márcalos como edición completa (icono dorado)'
+                            : list.isFavorites
                             ? 'Pulsa ♥ en una serie o libro para guardarlo aquí'
                             : 'Mantén pulsada una serie o libro y añádelo a esta lista',
                         textAlign: TextAlign.center,
@@ -272,6 +289,7 @@ class _ListScreenState extends State<ListScreen> {
                       sourceColor: state.sourceColor(item.ref.sourceId),
                       kindIcon: isBook ? Icons.menu_book_rounded : null,
                       favorite: !list.isFavorites && data.isFavorite(item.ref),
+                      complete: !list.isComplete && data.isComplete(item.ref),
                       selected: _selection.contains(key),
                       selectionActive: _selection.active,
                       onTap: _selection.active ? () => _selection.toggle(key, item) : () => openSnapshot(context, item),

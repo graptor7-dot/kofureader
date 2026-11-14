@@ -9,6 +9,7 @@ import '../komga/komga_client.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'downloads.dart';
+import 'novels.dart';
 import 'remote_hub.dart';
 import 'source.dart';
 import 'sync_service.dart';
@@ -94,6 +95,7 @@ class AppState extends ChangeNotifier {
   final DownloadManager downloads = DownloadManager();
   final Updater updater = Updater();
   late final RemoteHub remote = RemoteHub(this)..addListener(notifyListeners);
+  late final NovelService novels = NovelService(this);
   Timer? _pendingTimer;
   AppLifecycleListener? _lifecycle;
 

@@ -14,6 +14,14 @@ abstract final class Kofu {
   static const muted = Color(0xFF9393A8);
   static const read = Color(0xFF4ADE80);
 
+  /// Ediciones completas.
+  static const gold = Color(0xFFF5B942);
+  static const goldGradient = LinearGradient(
+    colors: [Color(0xFFFFD27A), Color(0xFFE09A2B)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
   static const accentGradient = LinearGradient(
     colors: [accent, accent2],
     begin: Alignment.topLeft,

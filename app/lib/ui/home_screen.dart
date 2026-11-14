@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../data/app_scope.dart';
 import '../data/app_state.dart';
+import '../data/novels.dart';
 import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'downloads_screen.dart';
 import 'history_screen.dart';
 import 'library_screen.dart';
+import 'novels/novel_library_screen.dart';
 import 'list_screen.dart';
 import 'navigation.dart';
 import 'desktop.dart' show isDesktop;
@@ -49,6 +51,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   Future<List<SourceLibraries>>? _libraries;
   Future<List<SourcedBook>>? _continue;
+  Future<List<NovelLibrary>>? _novelLibs;
+  final _novelPreviews = <String, Future<List<NovelWork>>>{};
   final _previews = <String, Future<List<KomgaSeries>>>{};
   final _selection = SelectionController<_HomePick>();
   int _sourcesSignature = -1;
@@ -85,6 +89,10 @@ class _HomeScreenState extends State<HomeScreen> {
     _previews.clear();
     _libraries = state.loadAllLibraries(refresh: refresh);
     _continue = state.continueReading();
+    _novelPreviews.clear();
+    _novelLibs = state.novels.available
+        ? state.novels.libraries().catchError((_) => <NovelLibrary>[])
+        : Future.value(const <NovelLibrary>[]);
   }
 
   Future<void> _reload() async {
@@ -116,6 +124,65 @@ class _HomeScreenState extends State<HomeScreen> {
         for (final e in g.libraries)
           if (!state.isLibraryHidden(e.source.id, e.library.id)) e,
     ];
+  }
+
+  Future<void> _openComplete() async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => const ListScreen(listId: UserData.completeId)));
+    _refreshContinue();
+  }
+
+  /// Fila de portadas de las ediciones completas (solo si hay alguna).
+  Widget _completeSection(AppState state) {
+    final items = state.visibleItemsOf(UserData.completeId);
+    if (items.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+    return SliverToBoxAdapter(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 28, 12, 14),
+            child: Row(
+              children: [
+                const Icon(Icons.workspace_premium_rounded, color: Kofu.gold),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Ediciones completas',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                TextButton(onPressed: _openComplete, child: const Text('Ver todas')),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 250,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              itemCount: items.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 14),
+              itemBuilder: (context, i) {
+                final item = items[i].item;
+                final client = state.client(item.ref.sourceId);
+                return SizedBox(
+                  width: 140,
+                  child: CoverCard(
+                    imageUrl: client.thumbnailUrl(item.ref),
+                    headers: client.authHeaders,
+                    title: item.seriesTitle ?? item.title,
+                    subtitle: item.title,
+                    complete: true,
+                    sourceColor: state.sourceColor(item.ref.sourceId),
+                    onTap: () => openSnapshot(context, item),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _openHistory() async {
@@ -212,6 +279,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     )
                   else
                     _librariesGrid(groups),
+                  _completeSection(state),
                   _sectionTitle('Listas'),
                   _listsGrid(state, groups == null ? const [] : _visibleLibraries(groups)),
                   const SliverToBoxAdapter(child: SizedBox(height: 120)),
@@ -387,6 +455,39 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
+          // Bibliotecas de novelas (servidas por KofuSync).
+          FutureBuilder<List<NovelLibrary>>(
+            future: _novelLibs,
+            builder: (context, snap) {
+              final libs = (snap.data ?? const <NovelLibrary>[])
+                  .where((l) => !state.isLibraryHidden(novelsSourceId, l.id))
+                  .toList();
+              return SliverPadding(
+                padding: EdgeInsets.only(top: libs.isEmpty ? 0 : 16),
+                sliver: SliverGrid.builder(
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 460,
+                    childAspectRatio: 2.3,
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                  ),
+                  itemCount: libs.length,
+                  itemBuilder: (context, i) {
+                    final lib = libs[i];
+                    return _NovelLibraryCard(
+                      library: lib,
+                      preview: _novelPreviews.putIfAbsent(
+                        lib.id,
+                        () => state.novels.works(lib.id).catchError((_) => <NovelWork>[]),
+                      ),
+                      onTap: () =>
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => NovelLibraryScreen(library: lib))),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
         ],
       ),
     );
@@ -406,8 +507,12 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisSpacing: 16,
           mainAxisSpacing: 16,
         ),
-        itemCount: favCount + lists.length + 3,
+        itemCount: 1 + favCount + lists.length + 3,
         itemBuilder: (context, index) {
+          if (index == 0) {
+            return _CompleteCard(count: state.visibleItemsOf(UserData.completeId).length, onTap: _openComplete);
+          }
+          index -= 1;
           if (index < favCount) {
             final e = libraries[index];
             final key = 'fav:${e.key}';
@@ -730,6 +835,85 @@ class _LibraryCard extends StatelessWidget {
   }
 }
 
+/// Tarjeta de biblioteca de novelas: portadas inclinadas y etiqueta "Novelas".
+class _NovelLibraryCard extends StatelessWidget {
+  final NovelLibrary library;
+  final Future<List<NovelWork>> preview;
+  final VoidCallback onTap;
+
+  const _NovelLibraryCard({required this.library, required this.preview, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(Kofu.radius + 4);
+    return Material(
+      color: Kofu.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned(
+              right: -30,
+              top: -20,
+              bottom: -20,
+              width: 300,
+              child: Transform.rotate(
+                angle: -0.12,
+                child: FutureBuilder<List<NovelWork>>(
+                  future: preview,
+                  builder: (context, snap) => Row(
+                    children: [
+                      for (final w in (snap.data ?? const <NovelWork>[]).where((w) => w.hasCover).take(3))
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: ClipRRect(borderRadius: BorderRadius.circular(8), child: novelCover(context, w)),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Kofu.surface, Kofu.surface.withValues(alpha: 0.92), Kofu.surface.withValues(alpha: 0.1)],
+                  stops: const [0, 0.45, 1],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SourceChip(label: 'Novelas', color: Kofu.accent2),
+                  const Spacer(),
+                  Text(
+                    library.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, letterSpacing: -0.3),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(' obra · Lectura de texto', style: const TextStyle(color: Kofu.muted, fontSize: 12)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ListCard extends StatelessWidget {
   final String title;
   final bool favorite;
@@ -877,6 +1061,58 @@ class _CastBanner extends StatelessWidget {
           ),
           TextButton(onPressed: hub.cancelChoosing, child: const Text('Cancelar')),
         ],
+      ),
+    );
+  }
+}
+
+/// Tarjeta dorada de Ediciones completas en Listas.
+class _CompleteCard extends StatelessWidget {
+  final int count;
+  final VoidCallback onTap;
+
+  const _CompleteCard({required this.count, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(Kofu.radius + 4);
+    return Material(
+      shape: RoundedRectangleBorder(borderRadius: radius),
+      clipBehavior: Clip.antiAlias,
+      child: Ink(
+        decoration: const BoxDecoration(gradient: Kofu.goldGradient),
+        child: InkWell(
+          onTap: onTap,
+          child: Stack(
+            children: [
+              Positioned(
+                right: -16,
+                bottom: -16,
+                child: Icon(
+                  Icons.workspace_premium_rounded,
+                  size: 120,
+                  color: const Color(0xFF3A2A00).withValues(alpha: 0.12),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.workspace_premium_rounded, color: Color(0xFF3A2A00)),
+                    const Spacer(),
+                    const Text(
+                      'Ediciones completas',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Color(0xFF3A2A00)),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(' obra', style: const TextStyle(fontSize: 12, color: Color(0xAA3A2A00))),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

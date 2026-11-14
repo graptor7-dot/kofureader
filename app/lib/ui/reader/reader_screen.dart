@@ -461,6 +461,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
                     );
                   },
                 ),
+                Builder(
+                  builder: (context) {
+                    final data = AppScope.of(context).data;
+                    final snap = _book.snapshot(widget.source.id);
+                    final complete = data.isComplete(snap.ref);
+                    return IconButton(
+                      tooltip: complete ? 'Quitar de Ediciones completas' : 'Marcar como edición completa',
+                      onPressed: () => data.setComplete([snap], !complete),
+                      icon: Icon(
+                        complete ? Icons.workspace_premium_rounded : Icons.workspace_premium_outlined,
+                        color: complete ? Kofu.gold : Colors.white,
+                      ),
+                    );
+                  },
+                ),
                 IconButton(
                   tooltip: 'Añadir a lista',
                   onPressed: () => showAddToListSheet(context, [_book.snapshot(widget.source.id)]),

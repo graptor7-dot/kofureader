@@ -96,3 +96,18 @@ KofuSync sirve también una web ligera para leer en la tele, controlada desde el
 
 La tele nunca habla con Komga: el móvil le da al servidor cómo llegar (solo en memoria) y el servidor
 le pasa las páginas. Guarda la página de la tele en favoritos para abrirla rápido.
+## Novelas (texto)
+
+KofuSync puede servir novelas en texto desde el NAS. Añade la carpeta al compose en solo lectura
+(en el compose de ejemplo ya está: `../../Novelas:/novels:ro`) y vuelve a arrancar.
+
+```
+Novelas/
+  Novelas Web/                 <- biblioteca
+    Mi novela/                 <- obra (el nombre de la carpeta es el título)
+      cover.jpg                <- portada (cover/portada.jpg|png|webp)
+      001 - El inicio.txt      <- un .txt o .md por capítulo, en orden natural
+      Volumen 2/002 - ….txt    <- subcarpetas opcionales por volumen
+```
+
+Los capítulos nuevos aparecen solos en la app. Se aceptan TXT en UTF-8 o Latin-1.

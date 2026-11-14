@@ -80,6 +80,10 @@ class UserList {
   const UserList(this.id, this.name, this.createdAt, this.updatedAt, {this.deleted = false});
 
   bool get isFavorites => id == UserData.favoritesId;
+  bool get isComplete => id == UserData.completeId;
+
+  /// Listas especiales (Favoritos, Ediciones completas): no se borran ni se renombran.
+  bool get isSpecial => isFavorites || isComplete;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -146,6 +150,9 @@ class ListItem {
 class UserData extends ChangeNotifier {
   static const favoritesId = 'favorites';
 
+  /// Ediciones completas: tomos recopilatorios marcados por el usuario.
+  static const completeId = 'complete';
+
   final Map<String, UserList> _lists = {};
   final Map<String, ListItem> _items = {};
   final Map<String, ({String? value, int updatedAt})> _prefs = {};
@@ -197,6 +204,7 @@ class UserData extends ChangeNotifier {
       }
     }
     _lists.putIfAbsent(favoritesId, () => UserList(favoritesId, 'Favoritos', 0, 0));
+    _lists.putIfAbsent(completeId, () => UserList(completeId, 'Ediciones completas', 0, 0));
   }
 
   void _changed() {
@@ -385,7 +393,7 @@ class UserData extends ChangeNotifier {
 
   /// Listas propias (sin Favoritos), por fecha de creación.
   List<UserList> get customLists =>
-      _lists.values.where((l) => !l.deleted && !l.isFavorites).toList()
+      _lists.values.where((l) => !l.deleted && !l.isSpecial).toList()
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
   UserList? list(String id) {
@@ -408,7 +416,7 @@ class UserData extends ChangeNotifier {
   }
 
   void deleteList(String id) {
-    if (id == favoritesId) return;
+    if (id == favoritesId || id == completeId) return;
     final l = _lists[id]!;
     final now = _now();
     _lists[id] = UserList(id, l.name, l.createdAt, now, deleted: true);
@@ -433,6 +441,12 @@ class UserData extends ChangeNotifier {
   }
 
   bool isFavorite(ItemRef ref) => contains(favoritesId, ref);
+
+  bool isComplete(ItemRef ref) => contains(completeId, ref);
+
+  /// Marca o desmarca libros como edición completa.
+  void setComplete(Iterable<ItemSnapshot> items, bool complete) =>
+      complete ? addAll(completeId, items) : removeAll(completeId, items.map((i) => i.ref));
 
   void addAll(String listId, Iterable<ItemSnapshot> snapshots) {
     final now = _now();

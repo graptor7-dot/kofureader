@@ -249,6 +249,20 @@ class _SeriesScreenState extends State<SeriesScreen> {
     await _load();
   }
 
+  /// Marca (o desmarca, si ya lo estaban todos) los libros seleccionados como edición completa.
+  void _toggleCompleteSelected() {
+    final data = AppScope.read(context).data;
+    final items = _selection.values.map((b) => b.snapshot(_sourceId)).toList();
+    final allComplete = items.every((i) => data.isComplete(i.ref));
+    data.setComplete(items, !allComplete);
+    showToast(
+      context,
+      allComplete ? ' quitado de Ediciones completas' : ' marcado como edición completa',
+      icon: Icons.workspace_premium_rounded,
+    );
+    _selection.clear();
+  }
+
   void _favoriteSelected() {
     final data = AppScope.read(context).data;
     data.addAll(data.favorites.id, _selection.values.map((b) => b.snapshot(_sourceId)));
@@ -282,6 +296,11 @@ class _SeriesScreenState extends State<SeriesScreen> {
                     tooltip: 'Añadir a Favoritos',
                     onPressed: _favoriteSelected,
                     icon: const Icon(Icons.favorite_border_rounded),
+                  ),
+                  IconButton(
+                    tooltip: 'Edición completa',
+                    onPressed: _toggleCompleteSelected,
+                    icon: const Icon(Icons.workspace_premium_rounded, color: Kofu.gold),
                   ),
                   IconButton(
                     tooltip: 'Añadir a lista',
@@ -400,6 +419,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
             read: b.isRead,
             progress: b.inProgress ? b.progressFraction : 0,
             favorite: state.data.isFavorite(b.snapshot(_sourceId).ref),
+            complete: state.data.isComplete(b.snapshot(_sourceId).ref),
             selected: _selection.contains(b.id),
             selectionActive: _selection.active,
             onTap: _selection.active ? () => _selection.toggle(b.id, b) : () => _open(b),

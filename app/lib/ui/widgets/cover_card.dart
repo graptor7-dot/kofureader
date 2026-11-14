@@ -62,6 +62,8 @@ class CoverCard extends StatelessWidget {
   final double progress; // 0..1
   final bool read;
   final bool favorite;
+  final bool complete; // edición completa
+  final Widget? placeholder; // en vez de imagen (p. ej. obra sin portada)
   final bool selected;
   final bool selectionActive;
   final Color? sourceColor;
@@ -84,6 +86,8 @@ class CoverCard extends StatelessWidget {
     this.progress = 0,
     this.read = false,
     this.favorite = false,
+    this.complete = false,
+    this.placeholder,
     this.selected = false,
     this.selectionActive = false,
     this.sourceColor,
@@ -131,7 +135,8 @@ class CoverCard extends StatelessWidget {
                       fit: StackFit.expand,
                       children: [
                         const ColoredBox(color: Kofu.surfaceHigh),
-                        image != null ? KomgaImage.provider(image!) : KomgaImage(url: imageUrl, headers: headers),
+                        placeholder ??
+                            (image != null ? KomgaImage.provider(image!) : KomgaImage(url: imageUrl, headers: headers)),
                         if (read) ColoredBox(color: Colors.black.withValues(alpha: 0.5)),
                         // Degradado inferior para que se lean las insignias.
                         const DecoratedBox(
@@ -144,6 +149,7 @@ class CoverCard extends StatelessWidget {
                           ),
                         ),
                         if (badge != null) Positioned(top: 8, right: 8, child: _Pill(text: badge!)),
+                        if (complete && !selectionActive) const Positioned(top: 8, left: 8, child: CompleteBadge()),
                         Positioned(
                           left: 8,
                           bottom: progress > 0 && progress < 1 ? 12 : 8,
@@ -313,3 +319,38 @@ const coverGridDelegate = SliverGridDelegateWithMaxCrossAxisExtent(
   crossAxisSpacing: 16,
   mainAxisSpacing: 20,
 );
+
+/// Insignia dorada de "edición completa".
+class CompleteBadge extends StatelessWidget {
+  final bool large;
+
+  const CompleteBadge({super.key, this.large = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: large ? 10 : 7, vertical: large ? 4 : 3),
+      decoration: BoxDecoration(
+        gradient: Kofu.goldGradient,
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6)],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.workspace_premium_rounded, size: large ? 15 : 12, color: const Color(0xFF3A2A00)),
+          const SizedBox(width: 3),
+          Text(
+            'COMPLETA',
+            style: TextStyle(
+              color: const Color(0xFF3A2A00),
+              fontSize: large ? 11 : 9,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

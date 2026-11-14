@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../data/app_scope.dart';
 import '../data/app_state.dart';
 import '../data/cover_cache.dart';
+import '../data/novels.dart';
 import '../data/source.dart';
 import '../data/sync_service.dart';
 import '../komga/komga_client.dart';
@@ -105,15 +106,32 @@ class _LibrariesCard extends StatefulWidget {
 }
 
 class _LibrariesCardState extends State<_LibrariesCard> {
-  late final Future<List<SourceLibraries>> _future = AppScope.read(context).loadAllLibraries();
+  /// Bibliotecas de Komga y de novelas, como filas (servidor, biblioteca, nombre, servidor visible, color).
+  late final Future<List<(String, String, String, String, Color)>> _future = _load();
+
+  Future<List<(String, String, String, String, Color)>> _load() async {
+    final state = AppScope.read(context);
+    final results = await Future.wait([
+      state.loadAllLibraries(),
+      state.novels.available
+          ? state.novels.libraries().catchError((_) => <NovelLibrary>[])
+          : Future.value(const <NovelLibrary>[]),
+    ]);
+    return [
+      for (final g in results[0] as List<SourceLibraries>)
+        for (final e in g.libraries)
+          (e.source.id, e.library.id, e.library.name, e.source.name, state.sourceColor(e.source.id)),
+      for (final l in results[1] as List<NovelLibrary>) (novelsSourceId, l.id, l.name, 'Novelas', Kofu.accent2),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    return FutureBuilder<List<SourceLibraries>>(
+    return FutureBuilder<List<(String, String, String, String, Color)>>(
       future: _future,
       builder: (context, snap) {
-        final entries = [for (final g in snap.data ?? const <SourceLibraries>[]) ...g.libraries];
+        final entries = snap.data ?? const [];
         return _Card(
           children: [
             if (!snap.hasData)
@@ -126,19 +144,16 @@ class _LibrariesCardState extends State<_LibrariesCard> {
                 title: Text('No hay bibliotecas disponibles', style: TextStyle(color: Kofu.muted)),
               )
             else
-              for (final e in entries)
+              for (final (sourceId, libraryId, name, sourceName, color) in entries)
                 Builder(
                   builder: (context) {
-                    final disabled = state.isLibraryDisabled(e.source.id, e.library.id);
-                    final private = state.isLibraryPrivate(e.source.id, e.library.id);
+                    final disabled = state.isLibraryDisabled(sourceId, libraryId);
+                    final private = state.isLibraryPrivate(sourceId, libraryId);
                     return ListTile(
-                      leading: Icon(
-                        disabled ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-                        color: state.sourceColor(e.source.id),
-                      ),
-                      title: Text(e.library.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                      leading: Icon(disabled ? Icons.visibility_off_rounded : Icons.visibility_rounded, color: color),
+                      title: Text(name, style: const TextStyle(fontWeight: FontWeight.w700)),
                       subtitle: Text(
-                        private ? '${e.source.name} · Privada' : e.source.name,
+                        private ? '$sourceName · Privada' : sourceName,
                         style: const TextStyle(color: Kofu.muted),
                       ),
                       trailing: Row(
@@ -146,7 +161,7 @@ class _LibrariesCardState extends State<_LibrariesCard> {
                         children: [
                           IconButton(
                             tooltip: private ? 'Quitar de privadas' : 'Marcar como privada',
-                            onPressed: () => state.setLibraryPrivate(e.source.id, e.library.id, !private),
+                            onPressed: () => state.setLibraryPrivate(sourceId, libraryId, !private),
                             icon: Icon(
                               private ? Icons.lock_rounded : Icons.lock_open_rounded,
                               color: private ? Kofu.accent : Kofu.muted,
@@ -154,7 +169,7 @@ class _LibrariesCardState extends State<_LibrariesCard> {
                           ),
                           Switch(
                             value: !disabled,
-                            onChanged: (visible) => state.setLibraryHidden(e.source.id, e.library.id, !visible),
+                            onChanged: (visible) => state.setLibraryHidden(sourceId, libraryId, !visible),
                           ),
                         ],
                       ),
