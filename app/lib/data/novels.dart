@@ -28,12 +28,14 @@ class NovelWork {
   final int chapters;
   final bool hasCover;
   final DateTime updatedAt;
+  final bool volumes; // novela ligera: va por tomos (un EPUB por tomo); [chapters] = número de tomos
 
   NovelWork(this.lib, Map<String, dynamic> j)
     : id = j['id'] as String,
       title = j['title'] as String,
       chapters = j['chapters'] as int? ?? 0,
       hasCover = j['hasCover'] == true,
+      volumes = j['volumes'] == true,
       updatedAt = DateTime.fromMillisecondsSinceEpoch(j['updatedAt'] as int? ?? 0);
 
   String get key => '$lib/$id';
@@ -43,8 +45,39 @@ class NovelWork {
     'title': title,
     'chapters': chapters,
     'hasCover': hasCover,
+    'volumes': volumes,
     'updatedAt': updatedAt.millisecondsSinceEpoch,
   };
+}
+
+/// Un tomo de una novela ligera.
+class NovelVolume {
+  final String id; // nombre del EPUB
+  final String title;
+  final int? number;
+  final int chapters;
+  final bool hasCover;
+
+  NovelVolume(Map<String, dynamic> j)
+    : id = j['id'] as String,
+      title = j['title'] as String,
+      number = j['number'] as int?,
+      chapters = j['chapters'] as int? ?? 0,
+      hasCover = j['hasCover'] == true;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'number': number,
+    'chapters': chapters,
+    'hasCover': hasCover,
+  };
+}
+
+/// Tomo al que pertenece un capítulo ("Tomo 01.epub#3" -> "Tomo 01.epub"), o null.
+String? volumeOfChapter(String chapterId) {
+  final i = chapterId.lastIndexOf('#');
+  return i < 0 ? null : chapterId.substring(0, i);
 }
 
 class NovelChapter {
@@ -82,7 +115,15 @@ class NovelService extends ChangeNotifier {
   Directory? _root;
   final Map<
     String,
-    ({Directory dir, String libName, NovelWork work, List<NovelChapter> chapters, Map<String, String> files})
+    ({
+      Directory dir,
+      String libName,
+      NovelWork work,
+      List<NovelChapter> chapters,
+      Map<String, String> files,
+      List<NovelVolume> volumes,
+      Map<String, String> volumeCovers,
+    })
   >
   _offline = {};
   final Map<String, double> _progress = {}; // descargas en curso (0..1)
@@ -108,6 +149,8 @@ class NovelService extends ChangeNotifier {
       work: work,
       chapters: [for (final c in (j['chapters'] as List).cast<Map<String, dynamic>>()) NovelChapter(c)],
       files: (j['files'] as Map).cast<String, String>(),
+      volumes: [for (final v in (j['volumes'] as List? ?? const []).cast<Map<String, dynamic>>()) NovelVolume(v)],
+      volumeCovers: (j['volumeCovers'] as Map? ?? const {}).cast<String, String>(),
     );
   }
 
@@ -123,9 +166,25 @@ class NovelService extends ChangeNotifier {
     notifyListeners();
     final dir = Directory('${_root!.path}/${DateTime.now().microsecondsSinceEpoch}');
     try {
-      final chapters = await this.chapters(work);
+      final volumes = work.volumes ? await this.volumes(work) : <NovelVolume>[];
+      final chapters = work.volumes
+          ? [for (final v in volumes) ...await this.chapters(work, volume: v.id)]
+          : await this.chapters(work);
       await dir.create(recursive: true);
       final files = <String, String>{};
+      final volumeCovers = <String, String>{};
+      for (final (i, v) in volumes.indexed) {
+        if (!v.hasCover) continue;
+        try {
+          final res = await http
+              .get(Uri.parse(volumeCoverUrl(work, v)), headers: headers)
+              .timeout(const Duration(seconds: 30));
+          if (res.statusCode == 200) {
+            await File('${dir.path}/vcover_$i').writeAsBytes(res.bodyBytes);
+            volumeCovers[v.id] = 'vcover_$i';
+          }
+        } catch (_) {}
+      }
       for (final (i, c) in chapters.indexed) {
         final text = await _fetchChapter(work, c);
         await File('${dir.path}/$i.txt').writeAsString(text);
@@ -147,6 +206,8 @@ class NovelService extends ChangeNotifier {
           'work': work.toJson(),
           'chapters': [for (final c in chapters) c.toJson()],
           'files': files,
+          'volumes': [for (final v in volumes) v.toJson()],
+          'volumeCovers': volumeCovers,
         }),
       );
       _loadOffline(dir);
@@ -229,17 +290,48 @@ class NovelService extends ChangeNotifier {
     }
   }
 
-  Future<List<NovelChapter>> chapters(NovelWork work) async {
+  /// Capítulos de la obra o, en una novela por tomos, de un tomo.
+  Future<List<NovelChapter>> chapters(NovelWork work, {String? volume}) async {
     try {
       if (!state.sync.configured) throw Exception('Sin KofuSync');
-      final j = await _get('/novels/chapters', {'lib': work.lib, 'work': work.id}) as Map<String, dynamic>;
+      final j =
+          await _get('/novels/chapters', {'lib': work.lib, 'work': work.id, 'vol': ?volume}) as Map<String, dynamic>;
       return [for (final c in (j['chapters'] as List).cast<Map<String, dynamic>>()) NovelChapter(c)];
     } catch (_) {
       final o = _offline[work.key];
       if (o == null) rethrow;
-      return o.chapters;
+      if (volume == null) return o.chapters;
+      return o.chapters.where((c) => volumeOfChapter(c.id) == volume).toList();
     }
   }
+
+  /// Tomos de una novela ligera.
+  Future<List<NovelVolume>> volumes(NovelWork work) async {
+    try {
+      if (!state.sync.configured) throw Exception('Sin KofuSync');
+      final j = await _get('/novels/volumes', {'lib': work.lib, 'work': work.id}) as Map<String, dynamic>;
+      return [for (final v in (j['volumes'] as List).cast<Map<String, dynamic>>()) NovelVolume(v)];
+    } catch (_) {
+      final o = _offline[work.key];
+      if (o == null || o.volumes.isEmpty) rethrow;
+      return o.volumes;
+    }
+  }
+
+  String volumeCoverUrl(NovelWork work, NovelVolume v) =>
+      _uri('/novels/volcover', {'lib': work.lib, 'work': work.id, 'vol': v.id}).toString();
+
+  File? offlineVolumeCover(NovelWork work, NovelVolume v) {
+    final o = _offline[work.key];
+    final name = o?.volumeCovers[v.id];
+    if (o == null || name == null) return null;
+    final f = File('${o.dir.path}/$name');
+    return f.existsSync() ? f : null;
+  }
+
+  /// Capítulos donde está [chapterId] (los de su tomo, en una novela por tomos).
+  Future<List<NovelChapter>> chaptersAround(NovelWork work, String chapterId) =>
+      chapters(work, volume: work.volumes ? volumeOfChapter(chapterId) : null);
 
   /// Texto de un capítulo: del disco si está descargado, si no de KofuSync.
   Future<String> chapterText(NovelWork work, NovelChapter chapter) async {
@@ -356,19 +448,36 @@ class NovelService extends ChangeNotifier {
     for (final lib in await libraries()) {
       if (state.isLibraryHidden(novelsSourceId, lib.id)) continue;
       for (final work in (await works(lib.id)).where(started)) {
-        final chapters = await this.chapters(work);
-        final i = chapters.indexWhere((c) => c.id == lastChapterId(work));
+        final last = lastChapterId(work)!;
+        final chapters = await chaptersAround(work, last);
+        final i = chapters.indexWhere((c) => c.id == last);
         if (i < 0) continue;
         final at = lastReadAt(work) ?? DateTime(2000);
         if (!isRead(work, chapters[i])) {
           reading.add(NovelProgress(work, chapters, i, position(work, chapters[i]) ?? 0, at));
-        } else if (i + 1 < chapters.length && !isRead(work, chapters[i + 1])) {
-          upNext.add(NovelProgress(work, chapters, i + 1, 0, at));
+        } else if (i + 1 < chapters.length) {
+          if (!isRead(work, chapters[i + 1])) upNext.add(NovelProgress(work, chapters, i + 1, 0, at));
+        } else if (work.volumes) {
+          // Tomo terminado: el primer capítulo del siguiente tomo.
+          try {
+            final vols = await volumes(work);
+            final v = vols.indexWhere((x) => x.id == volumeOfChapter(last));
+            if (v >= 0 && v + 1 < vols.length) {
+              final next = await this.chapters(work, volume: vols[v + 1].id);
+              if (next.isNotEmpty && !isRead(work, next.first)) upNext.add(NovelProgress(work, next, 0, 0, at));
+            }
+          } catch (_) {}
         }
       }
     }
     return (reading: reading, upNext: upNext);
   }
+
+  /// Capítulos leídos de un tomo.
+  int readInVolume(NovelWork work, NovelVolume v) => [
+    for (var i = 0; i < v.chapters; i++)
+      if (state.data.pref('novelread:${work.key}/${v.id}#$i') == '1') i,
+  ].length;
 
   /// Último capítulo abierto de la obra (para "Continuar").
   String? lastChapterId(NovelWork work) => state.data.pref(_key('last', work));

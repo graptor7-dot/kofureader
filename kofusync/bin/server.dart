@@ -18,6 +18,7 @@ import 'dart:math';
 import 'package:archive/archive.dart';
 
 part 'novels.dart';
+part 'novels_volumes.dart';
 part 'tv.dart';
 part 'tv_page.dart';
 
@@ -112,10 +113,11 @@ Future<void> _handle(HttpRequest req) async {
     if (req.method == 'GET' && path == '/health') {
       return _json(req, 200, {
         'ok': true,
-        'version': 4,
+        'version': 5,
         'remote': true,
         'novels': true,
         'novelSearch': true,
+        'novelVolumes': true,
       });
     }
     if (req.method == 'GET' &&

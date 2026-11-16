@@ -18,6 +18,7 @@ import '../widgets/cover_card.dart';
 import '../../data/remote_link.dart';
 import '../desktop.dart';
 import '../extras_screens.dart' show showTagsSheet, showRatingDialog, addToTop10;
+import '../series_screen.dart' show SeriesScreen;
 import '../widgets/selection.dart' show showToast;
 import '../widgets/list_sheets.dart';
 
@@ -527,11 +528,37 @@ class _ReaderScreenState extends State<ReaderScreen> {
               children: [
                 const BackButton(color: Colors.white),
                 Expanded(
-                  child: Text(
-                    _book.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => SeriesScreen.showFromReader(context, widget.source, _book.seriesId),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _book.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
+                          ),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  _book.seriesTitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: Kofu.accent, fontSize: 12),
+                                ),
+                              ),
+                              const Icon(Icons.chevron_right_rounded, color: Kofu.accent, size: 16),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
                 Builder(

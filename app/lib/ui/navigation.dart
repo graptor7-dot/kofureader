@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/app_scope.dart';
 import '../data/source.dart';
 import '../data/user_data.dart';
+import '../komga/chapter_kind.dart';
 import '../komga/models.dart';
 import 'reader/reader_screen.dart';
 import 'remote_screen.dart';
@@ -53,6 +54,10 @@ Future<void> openBook(BuildContext context, Source source, String bookId, {Strin
   }
   if (!context.mounted) return;
   Navigator.pop(context);
+  // Seguir el apartado del libro: capítulos sin extras, o solo extras.
+  classifyChapters(books, override: (b) => state.data.pref(chapterKindPrefKey(source.id, b.id)));
+  final opened = books.where((b) => b.id == bookId).firstOrNull;
+  if (opened != null) books = books.where((b) => b.isExtra == opened.isExtra).toList();
   final index = books.indexWhere((b) => b.id == bookId);
   await startReading(context, source, books, index < 0 ? 0 : index, page: page);
 }

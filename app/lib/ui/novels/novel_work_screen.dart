@@ -6,16 +6,46 @@ import '../../data/app_scope.dart';
 import '../../data/novels.dart';
 import '../../theme.dart';
 import '../widgets/selection.dart';
-import 'novel_library_screen.dart' show novelCover, novelType;
+import '../widgets/cover_card.dart';
+import 'novel_library_screen.dart' show novelCover, novelType, novelVolumeCover, novelVolumeImage;
 import 'novel_search_screen.dart';
 import 'novel_reader_screen.dart';
 
 /// Ficha de una novela: portada y lista de capítulos (agrupados por volumen si los hay).
+/// Una novela ligera va por tomos: primero se ve la cuadrícula de tomos y, al entrar en uno
+/// ([volume]), sus capítulos.
 class NovelWorkScreen extends StatefulWidget {
   final NovelWork work;
   final String? libraryName;
+  final NovelVolume? volume;
 
-  const NovelWorkScreen({super.key, required this.work, this.libraryName});
+  const NovelWorkScreen({super.key, required this.work, this.libraryName, this.volume});
+
+  static final _openRoutes = <String, Route<dynamic>>{};
+
+  /// Ir a la ficha desde el lector: vuelve a ella si está debajo; si no, sustituye el lector.
+  /// En una novela por tomos va al tomo del capítulo.
+  static void showFromReader(BuildContext context, NovelWork work, {String? chapterId}) {
+    final vol = work.volumes && chapterId != null ? volumeOfChapter(chapterId) : null;
+    final route = _openRoutes['${work.key}|${vol ?? ''}'] ?? _openRoutes['${work.key}|'];
+    if (route != null && route.isActive) {
+      Navigator.popUntil(context, (r) => r == route || r.isFirst);
+    } else {
+      final volume = vol == null
+          ? null
+          : NovelVolume({
+              'id': vol,
+              'title': vol.replaceFirst(RegExp(r'\.epub$', caseSensitive: false), ''),
+              'hasCover': true,
+            });
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => NovelWorkScreen(work: work, volume: volume),
+        ),
+      );
+    }
+  }
 
   @override
   State<NovelWorkScreen> createState() => _NovelWorkScreenState();
@@ -23,13 +53,73 @@ class NovelWorkScreen extends StatefulWidget {
 
 class _NovelWorkScreenState extends State<NovelWorkScreen> {
   late Future<List<NovelChapter>> _future = _load();
+  late Future<List<NovelVolume>>? _volumes = _loadVolumes();
 
-  Future<List<NovelChapter>> _load() => AppScope.read(context).novels.chapters(widget.work);
+  /// Novela por tomos vista desde fuera: cuadrícula de tomos en vez de capítulos.
+  bool get _byVolumes => widget.work.volumes && widget.volume == null;
+
+  Route<dynamic>? _route;
+  String get _routeKey => '${widget.work.key}|${widget.volume?.id ?? ''}';
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+    if (_route != null) NovelWorkScreen._openRoutes[_routeKey] = _route!;
+  }
+
+  @override
+  void dispose() {
+    if (NovelWorkScreen._openRoutes[_routeKey] == _route) NovelWorkScreen._openRoutes.remove(_routeKey);
+    super.dispose();
+  }
+
+  Future<List<NovelChapter>> _load() => _byVolumes
+      ? Future.value(const [])
+      : AppScope.read(context).novels.chapters(widget.work, volume: widget.volume?.id);
+
+  Future<List<NovelVolume>>? _loadVolumes() => _byVolumes ? AppScope.read(context).novels.volumes(widget.work) : null;
 
   Future<void> _reload() async {
     final f = _load();
-    setState(() => _future = f);
+    final v = _loadVolumes();
+    setState(() {
+      _future = f;
+      _volumes = v;
+    });
     await f;
+    if (v != null) await v;
+  }
+
+  void _openVolume(NovelVolume v) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => NovelWorkScreen(work: widget.work, libraryName: widget.libraryName, volume: v),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  /// Abre un capítulo por su id, cargando su tomo si hace falta.
+  Future<void> _openChapterId(String id, {String? highlight}) async {
+    final novels = AppScope.read(context).novels;
+    try {
+      final chapters = await novels.chaptersAround(widget.work, id);
+      final i = chapters.indexWhere((c) => c.id == id);
+      if (mounted && i >= 0) _open(chapters, i, highlight: highlight);
+    } catch (e) {
+      if (mounted) showToast(context, '$e');
+    }
+  }
+
+  /// Continuar en una novela por tomos: el último capítulo abierto, o el primero del primer tomo.
+  Future<void> _continueVolumes(List<NovelVolume> volumes) async {
+    final last = AppScope.read(context).novels.lastChapterId(widget.work);
+    if (last != null) return _openChapterId(last);
+    if (volumes.isEmpty) return;
+    final chapters = await AppScope.read(context).novels.chapters(widget.work, volume: volumes.first.id);
+    if (mounted && chapters.isNotEmpty) _open(chapters, 0);
   }
 
   Future<void> _open(List<NovelChapter> chapters, int index, {String? highlight}) async {
@@ -50,7 +140,11 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
     );
     if (hit == null || !mounted) return;
     final i = chapters.indexWhere((c) => c.id == hit.$1);
-    if (i >= 0) _open(chapters, i, highlight: hit.$2);
+    if (i >= 0) {
+      _open(chapters, i, highlight: hit.$2);
+    } else {
+      _openChapterId(hit.$1, highlight: hit.$2); // está en otro tomo
+    }
   }
 
   Future<void> _toggleDownload() async {
@@ -153,7 +247,7 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
         }
 
         return Scaffold(
-          floatingActionButton: chapters == null || chapters.isEmpty
+          floatingActionButton: _byVolumes || chapters == null || chapters.isEmpty
               ? null
               : RandomFab(onPressed: () => _open(chapters, random.nextInt(chapters.length))),
           body: RefreshIndicator(
@@ -165,11 +259,11 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
                   expandedHeight: 330,
                   title: Text(work.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                   actions: [
-                    if (chapters != null && chapters.isNotEmpty)
+                    if (_byVolumes || (chapters != null && chapters.isNotEmpty))
                       IconButton(
                         tooltip: 'Buscar en la novela',
                         icon: const Icon(Icons.manage_search_rounded),
-                        onPressed: () => _search(chapters),
+                        onPressed: () => _search(chapters ?? const []),
                       ),
                     IconButton(
                       tooltip: novels.isDownloaded(work) ? 'Descargada' : 'Descargar para leer sin conexión',
@@ -194,7 +288,7 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
                       children: [
                         ImageFiltered(
                           imageFilter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-                          child: Opacity(opacity: 0.5, child: novelCover(context, work)),
+                          child: Opacity(opacity: 0.5, child: _cover(context)),
                         ),
                         const DecoratedBox(
                           decoration: BoxDecoration(
@@ -223,7 +317,7 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
                                   ),
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(Kofu.radius),
-                                    child: novelCover(context, work),
+                                    child: _cover(context),
                                   ),
                                 ),
                                 const SizedBox(width: 20),
@@ -257,12 +351,31 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
                                         style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, height: 1.15),
                                       ),
                                       const SizedBox(height: 6),
+                                      if (widget.volume != null) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          widget.volume!.title,
+                                          style: const TextStyle(color: Kofu.accent, fontWeight: FontWeight.w700),
+                                        ),
+                                      ],
+                                      const SizedBox(height: 6),
                                       Text(
-                                        '${work.chapters} capítulos · $readCount leídos',
+                                        _byVolumes
+                                            ? '${work.chapters} tomo${work.chapters == 1 ? '' : 's'}'
+                                            : '${chapters?.length ?? work.chapters} capítulos · $readCount leídos',
                                         style: const TextStyle(color: Kofu.muted, fontSize: 13),
                                       ),
                                       const SizedBox(height: 14),
-                                      if (chapters != null && chapters.isNotEmpty)
+                                      if (_byVolumes)
+                                        FutureBuilder<List<NovelVolume>>(
+                                          future: _volumes,
+                                          builder: (context, v) => FilledButton.icon(
+                                            onPressed: v.data == null ? null : () => _continueVolumes(v.data!),
+                                            icon: const Icon(Icons.play_arrow_rounded),
+                                            label: Text(novels.started(work) ? 'Continuar' : 'Empezar'),
+                                          ),
+                                        )
+                                      else if (chapters != null && chapters.isNotEmpty)
                                         FilledButton.icon(
                                           onPressed: () => _open(chapters, _continueIndex(chapters)),
                                           icon: const Icon(Icons.play_arrow_rounded),
@@ -294,6 +407,8 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
                   )
                 else if (chapters == null)
                   const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator()))
+                else if (_byVolumes)
+                  _volumeGrid(novels)
                 else ...[
                   SliverList.list(children: rows),
                   const SliverToBoxAdapter(
@@ -313,4 +428,57 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
       },
     );
   }
+
+  Widget _cover(BuildContext context) =>
+      widget.volume == null ? novelCover(context, widget.work) : novelVolumeCover(context, widget.work, widget.volume!);
+
+  /// Cuadrícula de tomos, como el selector de novelas.
+  Widget _volumeGrid(NovelService novels) => FutureBuilder<List<NovelVolume>>(
+    future: _volumes,
+    builder: (context, snap) {
+      if (snap.hasError) {
+        return SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${snap.error}', textAlign: TextAlign.center),
+                TextButton(onPressed: _reload, child: const Text('Reintentar')),
+              ],
+            ),
+          ),
+        );
+      }
+      final volumes = snap.data;
+      if (volumes == null) {
+        return const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator()));
+      }
+      final last = novels.lastChapterId(widget.work);
+      final current = last == null ? null : volumeOfChapter(last);
+      return SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
+        sliver: SliverGrid.builder(
+          gridDelegate: coverGridDelegate,
+          itemCount: volumes.length,
+          itemBuilder: (context, i) {
+            final v = volumes[i];
+            final read = novels.readInVolume(widget.work, v);
+            return CoverCard(
+              imageUrl: '',
+              headers: const {},
+              image: novelVolumeImage(novels, widget.work, v),
+              placeholder: v.hasCover ? null : novelVolumeCover(context, widget.work, v),
+              title: v.title,
+              subtitle: read == 0 ? '${v.chapters} capítulos' : '$read de ${v.chapters} leídos',
+              badge: v.id == current ? 'Leyendo' : null,
+              read: v.chapters > 0 && read >= v.chapters,
+              progress: v.chapters == 0 ? 0 : read / v.chapters,
+              onTap: () => _openVolume(v),
+            );
+          },
+        ),
+      );
+    },
+  );
 }

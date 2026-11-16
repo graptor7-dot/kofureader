@@ -6,6 +6,7 @@ import '../data/app_scope.dart';
 import '../data/app_state.dart';
 import '../data/snapshots.dart';
 import '../data/source.dart';
+import '../komga/chapter_kind.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'navigation.dart' show startReading;
@@ -22,6 +23,25 @@ class SeriesScreen extends StatefulWidget {
   final KomgaSeries? initial;
 
   const SeriesScreen({super.key, required this.source, required this.seriesId, this.initial});
+
+  // Fichas abiertas, para que el lector pueda volver a la que ya hay en vez de abrir otra.
+  static final _openRoutes = <String, Route<dynamic>>{};
+
+  /// Abre la ficha de la serie desde el lector: vuelve a ella si ya está abierta debajo;
+  /// si no (p. ej. se empezó desde Seguir leyendo), sustituye el lector por la ficha.
+  static void showFromReader(BuildContext context, Source source, String seriesId) {
+    final route = _openRoutes['${source.id}|$seriesId'];
+    if (route != null && route.isActive) {
+      Navigator.popUntil(context, (r) => r == route || r.isFirst);
+    } else {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SeriesScreen(source: source, seriesId: seriesId),
+        ),
+      );
+    }
+  }
 
   @override
   State<SeriesScreen> createState() => _SeriesScreenState();
@@ -43,8 +63,19 @@ class _SeriesScreenState extends State<SeriesScreen> {
     _load();
   }
 
+  String get _routeKey => '${widget.source.id}|${widget.seriesId}';
+  Route<dynamic>? _route;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _route = ModalRoute.of(context);
+    if (_route != null) SeriesScreen._openRoutes[_routeKey] = _route!;
+  }
+
   @override
   void dispose() {
+    if (SeriesScreen._openRoutes[_routeKey] == _route) SeriesScreen._openRoutes.remove(_routeKey);
     _selection.dispose();
     super.dispose();
   }
@@ -58,6 +89,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
         _series = results[0] as KomgaSeries;
         _books = results[1] as List<KomgaBook>;
         _error = null;
+        _classify();
       });
     } catch (e) {
       if (!mounted) return;
@@ -68,6 +100,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
         if (local.isNotEmpty) {
           _books = [for (final b in local) b.toKomgaBook(progress: _localProgress(b.bookId))];
           _offline = true;
+          _classify();
           _error = null;
         } else {
           _error = e.toString();
@@ -170,24 +203,81 @@ class _SeriesScreenState extends State<SeriesScreen> {
   }
 
   String? _tag;
+  bool _showExtras = false; // apartado Extras en vez de los capítulos
+
+  /// Separa extras y capítulos (reglas de chapter_kind.dart + correcciones manuales).
+  void _classify() {
+    final data = AppScope.read(context).data;
+    final books = _books;
+    if (books != null) classifyChapters(books, override: (b) => data.pref(chapterKindPrefKey(_sourceId, b.id)));
+  }
+
+  /// Corrección manual: 'extra', 'story' o null (automático).
+  void _setKind(Iterable<KomgaBook> books, String? kind) {
+    final data = AppScope.read(context).data;
+    for (final b in books) {
+      data.setPref(chapterKindPrefKey(_sourceId, b.id), kind);
+    }
+    final n = books.length;
+    _selection.clear();
+    setState(_classify);
+    showToast(context, switch (kind) {
+      'extra' => '$n movido${n == 1 ? '' : 's'} a Extras',
+      'story' => '$n movido${n == 1 ? '' : 's'} a Capítulos',
+      _ => 'Clasificación automática',
+    }, icon: Icons.auto_awesome_rounded);
+  }
+
+  /// Llegada tardía: capítulo nuevo sin leer con número menor que lo ya leído.
+  bool _lateArrival(KomgaBook b) {
+    final n = b.parsedNumber;
+    final created = b.created;
+    if (n == null || created == null || b.isRead || b.isExtra) return false;
+    if (DateTime.now().difference(created).inDays > 30) return false;
+    final readMax = _chapters.where((x) => x.isRead).map((x) => x.parsedNumber ?? 0).fold(0.0, (a, x) => x > a ? x : a);
+    return n < readMax;
+  }
+
+  /// Capítulos normales (sin extras), en orden de lectura.
+  List<KomgaBook> get _chapters => _books!.where((b) => !b.isExtra).toList();
+  List<KomgaBook> get _extras => _books!.where((b) => b.isExtra).toList();
+
+  /// Orden de la lista: los últimos arriba (preferencia sincronizada, para todas las series).
+  bool get _newestFirst => AppScope.read(context).data.pref('chapter_order') == 'desc';
+
+  void _toggleOrder() {
+    final newest = !_newestFirst;
+    AppScope.read(context).data.setPref('chapter_order', newest ? 'desc' : null);
+    showToast(
+      context,
+      newest ? 'Los últimos capítulos salen arriba' : 'Los primeros capítulos salen arriba',
+      icon: newest ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded,
+    );
+  }
 
   List<KomgaBook> get _visible {
     final extras = AppScope.read(context).extras;
-    return _books!
+    final list = (_showExtras ? _extras : _chapters)
         .where((b) => _status.isEmpty || _status.contains(b.status))
         .where((b) => _tag == null || extras.tagsOf(b.snapshot(_sourceId).ref).contains(_tag))
         .toList();
+    return _newestFirst ? list.reversed.toList() : list;
   }
 
+  /// Se lee siguiendo su apartado: de un capítulo se pasa al siguiente capítulo
+  /// (saltando los extras), y de un extra al siguiente extra.
   Future<void> _open(KomgaBook book) async {
-    final books = _books!;
+    final books = book.isExtra ? _extras : _chapters;
     await startReading(context, widget.source, books, books.indexOf(book));
     if (mounted) _load();
   }
 
   /// Primer libro empezado; si no, el primero sin leer; si no, el primero.
-  KomgaBook _continueBook(List<KomgaBook> books) =>
-      books.where((b) => b.inProgress).firstOrNull ?? books.where((b) => !b.isRead).firstOrNull ?? books.first;
+  KomgaBook _continueBook(List<KomgaBook> all) {
+    final books = all.where((b) => !b.isExtra).toList();
+    if (books.isEmpty) return all.first;
+    return books.where((b) => b.inProgress).firstOrNull ?? books.where((b) => !b.isRead).firstOrNull ?? books.first;
+  }
 
   void _random() {
     final pool = _selection.active ? _selection.values : _visible;
@@ -343,6 +433,16 @@ class _SeriesScreenState extends State<SeriesScreen> {
                     },
                     icon: const Icon(Icons.sell_rounded),
                   ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Extra / capítulo',
+                    icon: const Icon(Icons.auto_awesome_rounded),
+                    onSelected: (v) => _setKind(_selection.values, v == 'auto' ? null : v),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'extra', child: Text('Es un extra')),
+                      PopupMenuItem(value: 'story', child: Text('Es historia (a Capítulos)')),
+                      PopupMenuItem(value: 'auto', child: Text('Clasificar automáticamente')),
+                    ],
+                  ),
                   IconButton(
                     tooltip: 'Añadir al Top 10',
                     onPressed: () async {
@@ -401,12 +501,40 @@ class _SeriesScreenState extends State<SeriesScreen> {
                       ),
                     ),
                   ),
+                if (books.any((b) => b.isExtra))
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: SegmentedButton<bool>(
+                        showSelectedIcon: false,
+                        segments: [
+                          ButtonSegment(
+                            value: false,
+                            icon: const Icon(Icons.menu_book_rounded),
+                            label: Text('Capítulos · ${books.where((b) => !b.isExtra).length}'),
+                          ),
+                          ButtonSegment(
+                            value: true,
+                            icon: const Icon(Icons.auto_awesome_rounded),
+                            label: Text('Extras · ${books.where((b) => b.isExtra).length}'),
+                          ),
+                        ],
+                        selected: {_showExtras},
+                        onSelectionChanged: (v) => setState(() {
+                          _showExtras = v.first;
+                          _selection.clear();
+                        }),
+                      ),
+                    ),
+                  ),
                 SliverToBoxAdapter(
                   child: FilterRow(
                     children: [
                       for (final s in ReadStatus.values)
                         FilterChip(
-                          label: Text('${s.label} · ${books.where((b) => b.status == s).length}'),
+                          label: Text(
+                            '${s.label} · ${books.where((b) => b.isExtra == _showExtras && b.status == s).length}',
+                          ),
                           selected: _status.contains(s),
                           onSelected: (_) => setState(() => _status.contains(s) ? _status.remove(s) : _status.add(s)),
                         ),
@@ -445,7 +573,16 @@ class _SeriesScreenState extends State<SeriesScreen> {
             downloaded: downloaded,
             downloadProgress: state.downloads.progressOf(_sourceId, b.id),
             title: b.title,
-            subtitle: b.inProgress ? 'Pág. ${b.readProgress!.page} de ${b.pagesCount}' : '${b.pagesCount} páginas',
+            subtitle: b.isExtra && b.parsedNumber != null
+                ? 'Tras el cap. ${b.parsedNumber!.floor()} · ${b.pagesCount} págs.'
+                : b.inProgress
+                ? 'Pág. ${b.readProgress!.page} de ${b.pagesCount}'
+                : '${b.pagesCount} páginas',
+            badge: b.kind == ChapterKind.probableExtra
+                ? '¿Extra?'
+                : _lateArrival(b)
+                ? 'Nuevo · atrás'
+                : null,
             read: b.isRead,
             progress: b.inProgress ? b.progressFraction : 0,
             favorite: state.data.isFavorite(b.snapshot(_sourceId).ref),
@@ -477,6 +614,13 @@ class _SeriesScreenState extends State<SeriesScreen> {
       expandedHeight: coverWidth * 1.45 + kToolbarHeight + 40,
       title: Text(series?.title ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
       actions: [
+        IconButton(
+          tooltip: _newestFirst
+              ? 'Últimos arriba (toca para ver los primeros arriba)'
+              : 'Primeros arriba (toca para ver los últimos arriba)',
+          onPressed: _toggleOrder,
+          icon: Icon(_newestFirst ? Icons.south_rounded : Icons.north_rounded),
+        ),
         IconButton(
           tooltip: 'Modo de lectura',
           onPressed: _pickMode,
@@ -592,8 +736,12 @@ class _SeriesScreenState extends State<SeriesScreen> {
                           const SizedBox(height: 6),
                           if (series != null)
                             Text(
-                              '${series.booksCount} libros · ${series.booksReadCount} leídos'
-                              '${override != null ? ' · ${override.label}' : ''}',
+                              books == null
+                                  ? '${series.booksCount} libros · ${series.booksReadCount} leídos'
+                                  : '${books.where((b) => !b.isExtra).length} capítulos · '
+                                        '${books.where((b) => !b.isExtra && b.isRead).length} leídos'
+                                        '${books.any((b) => b.isExtra) ? ' · ${books.where((b) => b.isExtra).length} extras' : ''}'
+                                        '${override != null ? ' · ${override.label}' : ''}',
                               style: const TextStyle(color: Kofu.muted, fontSize: 13),
                             ),
                           const SizedBox(height: 14),

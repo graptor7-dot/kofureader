@@ -114,6 +114,7 @@ Future<void> _novels(HttpRequest req) async {
   if (!_novelsRoot.existsSync())
     return _json(req, 200, {'libraries': [], 'configured': false});
   final q = req.uri.queryParameters;
+  if (await _novelVolumes(req, q)) return;
   switch (req.uri.path) {
     case '/novels':
       final libs =
@@ -166,6 +167,7 @@ Future<void> _novels(HttpRequest req) async {
                   'title': _baseName(w.path),
                   'chapters': chapters.length,
                   'hasCover': _coverFile(w) != null,
+                  'volumes': _volumeLib(lib) && _volumeFiles(w).isNotEmpty,
                   'updatedAt': updated.millisecondsSinceEpoch,
                 };
               }(),
@@ -175,6 +177,9 @@ Future<void> _novels(HttpRequest req) async {
     case '/novels/chapters':
       final work = _workDir(q['lib'], q['work']);
       if (work == null) return _json(req, 404, {'error': 'not found'});
+      if (q['vol'] != null) {
+        return _json(req, 200, {'chapters': _volumeChapters(work, q['vol']!)});
+      }
       return _json(req, 200, {
         'chapters': [
           for (final f in _chapterFiles(work))
@@ -205,11 +210,18 @@ Future<void> _novels(HttpRequest req) async {
           ch.split('/').any((p) => !_safeName(p))) {
         return _json(req, 404, {'error': 'not found'});
       }
-      final file = File('${work.path}/$ch');
-      if (!file.existsSync() || !_textExtensions.contains(_ext(file.path))) {
-        return _json(req, 404, {'error': 'not found'});
+      String text;
+      if (ch.contains('#')) {
+        final t = _volumeChapterText(work, ch);
+        if (t == null) return _json(req, 404, {'error': 'not found'});
+        text = t;
+      } else {
+        final file = File('${work.path}/$ch');
+        if (!file.existsSync() || !_textExtensions.contains(_ext(file.path))) {
+          return _json(req, 404, {'error': 'not found'});
+        }
+        text = await _readChapter(file);
       }
-      final text = await _readChapter(file);
       req.response
         ..statusCode = 200
         ..headers.contentType = ContentType('text', 'plain', charset: 'utf-8')
@@ -224,12 +236,33 @@ Future<void> _novels(HttpRequest req) async {
         return _json(req, 400, {'error': 'query too short'});
       final results = <Map<String, Object?>>[];
       var total = 0;
-      for (final f in _chapterFiles(work)) {
-        final text = await _readChapter(f);
+      // Capítulos a buscar: (id, título, número, texto).
+      final sources = <(String, String, int?, Future<String> Function())>[];
+      if (_volumeLib(q['lib']) && _volumeFiles(work).isNotEmpty) {
+        for (final v in _volumeFiles(work)) {
+          final vol = _baseName(v.path);
+          final book = _openEpub(v);
+          for (final (i, c) in book.chapters.indexed) {
+            sources.add((
+              '$vol#$i',
+              '${_stem(vol)} · ${c.title}',
+              i + 1,
+              () async => c.text,
+            ));
+          }
+        }
+      } else {
+        for (final f in _chapterFiles(work)) {
+          final rel = f.path
+              .substring(work.path.length + 1)
+              .replaceAll('\\', '/');
+          final (number, title) = _chapterTitle(rel.split('/').last);
+          sources.add((rel, title, number, () => _readChapter(f)));
+        }
+      }
+      for (final (rel, title, number, load) in sources) {
+        final text = await load();
         final folded = _fold(text);
-        final rel = f.path
-            .substring(work.path.length + 1)
-            .replaceAll('\\', '/');
         final snippets = <String>[];
         var count = 0;
         for (
@@ -249,7 +282,6 @@ Future<void> _novels(HttpRequest req) async {
         }
         if (count == 0) continue;
         total += count;
-        final (number, title) = _chapterTitle(rel.split('/').last);
         results.add({
           'id': rel,
           'title': title,

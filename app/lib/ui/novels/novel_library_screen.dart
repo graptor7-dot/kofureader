@@ -15,6 +15,20 @@ Widget novelCover(BuildContext context, NovelWork work, {BoxFit fit = BoxFit.cov
   return KomgaImage.provider(image, fit: fit);
 }
 
+/// Portada de un tomo (o la de la obra si el tomo no tiene).
+Widget novelVolumeCover(BuildContext context, NovelWork work, NovelVolume v, {BoxFit fit = BoxFit.cover}) {
+  final image = novelVolumeImage(AppScope.read(context).novels, work, v);
+  if (image == null) return _NoCover(title: v.title);
+  return KomgaImage.provider(image, fit: fit);
+}
+
+ImageProvider? novelVolumeImage(NovelService novels, NovelWork work, NovelVolume v) {
+  if (!v.hasCover) return novelCoverImage(novels, work);
+  final file = novels.offlineVolumeCover(work, v);
+  if (file != null) return FileImage(file);
+  return CachedCoverImage(novels.volumeCoverUrl(work, v), headers: novels.headers);
+}
+
 /// Portada descargada si la hay; si no, la de KofuSync (o null si no tiene).
 ImageProvider? novelCoverImage(NovelService novels, NovelWork work) {
   if (!work.hasCover) return null;
@@ -218,7 +232,9 @@ class _NovelLibraryScreenState extends State<NovelLibraryScreen> {
                           image: novelCoverImage(novels, w),
                           placeholder: w.hasCover ? null : _NoCover(title: w.title),
                           title: w.title,
-                          subtitle: '${w.chapters} capítulo${w.chapters == 1 ? '' : 's'}',
+                          subtitle: w.volumes
+                              ? '${w.chapters} tomo${w.chapters == 1 ? '' : 's'}'
+                              : '${w.chapters} capítulo${w.chapters == 1 ? '' : 's'}',
                           badge: novels.started(w) ? 'Leyendo' : null,
                           tag: type?.$1,
                           tagColor: type?.$2,

@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import 'novel_work_screen.dart' show NovelWorkScreen;
+
 import '../../data/app_scope.dart';
 import '../../data/novels.dart';
 import '../../data/user_data.dart';
@@ -464,11 +466,41 @@ class _NovelReaderScreenState extends State<NovelReaderScreen> {
               children: [
                 BackButton(color: fg),
                 Expanded(
-                  child: Text(
-                    _chapter.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: fg, fontSize: 16),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => NovelWorkScreen.showFromReader(context, widget.work, chapterId: _chapter.id),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _chapter.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: fg, fontSize: 15, fontWeight: FontWeight.w600),
+                          ),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  widget.work.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: theme.isLight ? Kofu.accent2 : Kofu.accent, fontSize: 12),
+                                ),
+                              ),
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                color: theme.isLight ? Kofu.accent2 : Kofu.accent,
+                                size: 16,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
                 IconButton(

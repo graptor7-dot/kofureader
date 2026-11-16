@@ -228,7 +228,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             headers: const {},
             image: novelCoverImage(state.novels, w),
             title: w.title,
-            subtitle: '${w.chapters} capítulos',
+            subtitle: w.volumes ? '${w.chapters} tomos' : '${w.chapters} capítulos',
             tag: type.$1,
             tagColor: type.$2,
             downloaded: true,
