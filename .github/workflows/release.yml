@@ -75,8 +75,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: app/KofuReader-windows.zip }
 
+  # Si GitHub no tiene Macs libres y el iPad no llega, se publica igual con Android y Windows
+  # (la .ipa se añade después volviendo a subir el tag).
   publicar:
     needs: [android, ios, windows]
+    if: ${{ always() && needs.android.result == 'success' && needs.windows.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
