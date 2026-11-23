@@ -311,6 +311,30 @@ class AppState extends ChangeNotifier {
 
   bool get hasPrivateLibraries => data.prefKeys.any((k) => k.startsWith('privatelib:') && data.pref(k) == '1');
 
+  /// Obras o capítulos borrados del servidor desde la app, mientras Komga aún los lista.
+  /// Se sincroniza; el valor es la serie (o 'series'), para limpiar las marcas.
+  bool isGone(String sourceId, String id) => data.pref('gone:$sourceId:$id') != null;
+
+  void markGone(String sourceId, String id, String? owner) => data.setPref('gone:$sourceId:$id', owner);
+
+  /// Quita las marcas de los capítulos de [seriesId] que Komga ya no lista.
+  void cleanGone(String sourceId, String seriesId, Set<String> listed) {
+    final prefix = 'gone:$sourceId:';
+    for (final k in data.prefKeys.toList()) {
+      if (k.startsWith(prefix) && data.pref(k) == seriesId && !listed.contains(k.substring(prefix.length))) {
+        data.setPref(k, null);
+      }
+    }
+  }
+
+  /// Modo gestión (solo PC, no se guarda): botones rápidos en cada capítulo.
+  bool manageMode = false;
+
+  void setManageMode(bool on) {
+    manageMode = on;
+    notifyListeners();
+  }
+
   /// Si las bibliotecas privadas están escondidas en este dispositivo (no se sincroniza).
   bool get privateHidden => data.localPref('private_hidden') == '1';
 

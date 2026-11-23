@@ -72,6 +72,8 @@ class CoverCard extends StatelessWidget {
   final IconData? kindIcon;
   final ImageProvider? image; // sustituye a imageUrl (p. ej. portada descargada)
   final bool downloaded;
+  final bool gone; // borrado del servidor: se muestra apagado y tachado
+  final Widget? overlay; // encima de la portada (p. ej. botones del modo gestión)
   final bool stacked; // agrupación: se dibuja como un montón de libros
   final double? downloadProgress; // no nulo mientras se descarga
   final VoidCallback onTap;
@@ -100,6 +102,8 @@ class CoverCard extends StatelessWidget {
     this.image,
     this.downloaded = false,
     this.stacked = false,
+    this.overlay,
+    this.gone = false,
     this.downloadProgress,
   });
 
@@ -202,6 +206,8 @@ class CoverCard extends StatelessWidget {
                   child: selected ? const Icon(Icons.check_rounded, size: 16, color: Colors.white) : null,
                 ),
               ),
+            if (gone) const Positioned.fill(child: _GoneMark()),
+            if (overlay != null) Positioned.fill(child: overlay!),
           ],
         ),
       ),
@@ -229,7 +235,12 @@ class CoverCard extends StatelessWidget {
                 title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600, height: 1.25),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  height: 1.25,
+                  color: gone ? Kofu.muted : null,
+                  decoration: gone ? TextDecoration.lineThrough : null,
+                ),
               ),
               if (subtitle != null)
                 Padding(
@@ -405,6 +416,39 @@ class _Stack extends StatelessWidget {
         Positioned.fill(left: 6, right: 6, top: 6, bottom: 6, child: sheet(0.22)),
         Positioned.fill(left: 0, right: 12, top: 12, bottom: 0, child: child),
       ],
+    );
+  }
+}
+
+/// Velo de "Borrado del servidor" sobre la portada.
+class _GoneMark extends StatelessWidget {
+  const _GoneMark();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.black.withValues(alpha: 0.72),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.delete_forever_rounded, color: Colors.redAccent, size: 30),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.redAccent.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.redAccent.withValues(alpha: 0.7)),
+              ),
+              child: const Text(
+                'Borrado',
+                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.4),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -15,6 +15,7 @@ import 'extras_screens.dart';
 import 'widgets/cover_card.dart';
 import 'widgets/list_sheets.dart';
 import 'widgets/reading_mode_picker.dart';
+import 'widgets/manage.dart';
 import 'widgets/selection.dart';
 
 /// Ficha de una serie y sus libros.
@@ -92,6 +93,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
       setState(() {
         _series = results[0] as KomgaSeries;
         _books = results[1] as List<KomgaBook>;
+        AppScope.read(context).cleanGone(_sourceId, widget.seriesId, {for (final b in _books!) b.id});
         _error = null;
         _classify();
       });
@@ -528,14 +530,21 @@ class _SeriesScreenState extends State<SeriesScreen> {
     // Un libro agrupado (p. ej. al pulsar Continuar en la serie) sigue por su agrupación.
     final group = widget.groupId == null ? _groups.byBook[book.id] : null;
     final pool = group == null ? _loose : _membersOf(group);
-    final books = pool.where((b) => b.isExtra == book.isExtra).toList();
+    if (_isGone(book)) {
+      showToast(context, 'Este capítulo ya no está en el servidor', icon: Icons.delete_forever_rounded);
+      return;
+    }
+    final books = pool.where((b) => b.isExtra == book.isExtra && !_isGone(b)).toList();
     await startReading(context, widget.source, books, books.indexOf(book));
     if (mounted) _load();
   }
 
   /// Primer libro empezado; si no, el primero sin leer; si no, el primero.
+  /// Borrado del servidor (desde la app o ya detectado por Komga) pero aún listado.
+  bool _isGone(KomgaBook b) => b.deleted || AppScope.read(context).isGone(_sourceId, b.id);
+
   KomgaBook _continueBook(List<KomgaBook> all) {
-    final books = all.where((b) => !b.isExtra).toList();
+    final books = all.where((b) => !b.isExtra && !_isGone(b)).toList();
     if (books.isEmpty) return all.first;
     return books.where((b) => b.inProgress).firstOrNull ?? books.where((b) => !b.isRead).firstOrNull ?? books.first;
   }
@@ -630,6 +639,64 @@ class _SeriesScreenState extends State<SeriesScreen> {
     _selection.clear();
   }
 
+  /// Modo gestión: borra capítulos del servidor (con confirmación).
+  Future<void> _deleteBooks(List<KomgaBook> books) async {
+    final n = books.length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent, size: 32),
+        title: Text(n == 1 ? '¿Borrar «${books.first.title}» del servidor?' : '¿Borrar $n capítulos del servidor?'),
+        content: Text(
+          [
+            if (n > 1) ...[for (final b in books.take(8)) '· ${b.title}', if (n > 8) '· y ${n - 8} más', ''],
+            'Se borra el archivo del NAS. No se puede deshacer.',
+          ].join('\n'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          FilledButton(
+            autofocus: true,
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Borrar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final state = AppScope.read(context);
+    final client = state.client(_sourceId);
+    _selection.clear();
+    var done = 0;
+    String? error;
+    for (final b in books) {
+      try {
+        await client.deleteBookFile(b.id);
+        done++;
+      } catch (e) {
+        error = '$e';
+        break;
+      }
+    }
+    if (!mounted) return;
+    // Komga lo sigue listando hasta que escanea y vacía la papelera: se marca como borrado.
+    for (final b in books.take(done)) {
+      state.markGone(_sourceId, b.id, widget.seriesId);
+    }
+    if (done > 0) {
+      setState(() {});
+      final library = books.first.libraryId;
+      client.scanLibrary(library).catchError((_) {});
+    }
+    showToast(
+      context,
+      error ?? '$done capítulo${done == 1 ? '' : 's'} borrado${done == 1 ? '' : 's'} del servidor',
+      icon: error == null ? Icons.delete_forever_rounded : Icons.error_outline,
+    );
+    await _load();
+  }
+
   Future<void> _addSelectedToList() async {
     await showAddToListSheet(context, _selection.values.map((b) => b.snapshot(_sourceId)).toList());
     _selection.clear();
@@ -709,6 +776,12 @@ class _SeriesScreenState extends State<SeriesScreen> {
                       PopupMenuItem(value: 'auto', child: Text('Clasificar automáticamente')),
                     ],
                   ),
+                  if (state.manageMode && !_offline)
+                    IconButton(
+                      tooltip: 'Borrar del servidor',
+                      onPressed: () => _deleteBooks(_selection.values),
+                      icon: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent),
+                    ),
                   IconButton(
                     tooltip: 'Añadir al Top 10',
                     onPressed: () async {
@@ -743,6 +816,10 @@ class _SeriesScreenState extends State<SeriesScreen> {
               else if (books == null)
                 const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator()))
               else ...[
+                if (state.manageMode && !_offline)
+                  const SliverToBoxAdapter(
+                    child: ManageBanner(text: 'Modo gestión: usa los botones de cada capítulo.'),
+                  ),
                 if (_offline)
                   SliverToBoxAdapter(
                     child: Container(
@@ -877,6 +954,18 @@ class _SeriesScreenState extends State<SeriesScreen> {
             complete: state.data.isComplete(b.snapshot(_sourceId).ref),
             selected: _selection.contains(b.id),
             selectionActive: _selection.active,
+            gone: _isGone(b),
+            overlay: state.manageMode && !_offline && !_selection.active && !_isGone(b)
+                ? ManageBookActions(
+                    read: b.isRead,
+                    favorite: state.data.isFavorite(b.snapshot(_sourceId).ref),
+                    onRead: () => _setRead([b], true),
+                    onUnread: () => _setRead([b], false),
+                    onFavorite: () => state.data.toggleFavorite(b.snapshot(_sourceId)),
+                    onList: () => showAddToListSheet(context, [b.snapshot(_sourceId)]),
+                    onDelete: () => _deleteBooks([b]),
+                  )
+                : null,
             onTap: _selection.active ? () => _selection.toggle(b.id, b) : () => _open(b),
             onLongPress: () => _selection.toggle(b.id, b),
           );

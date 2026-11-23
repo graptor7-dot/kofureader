@@ -207,6 +207,9 @@ class KomgaClient {
     _check(res);
   }
 
+  /// Pide a Komga que escanee una biblioteca (para que note los archivos borrados).
+  Future<void> scanLibrary(String libraryId) => _send('POST', '/libraries/$libraryId/scan');
+
   /// Marca un libro como leído o no leído.
   Future<void> setBookRead(String bookId, bool read) =>
       read ? markProgress(bookId, page: 0, completed: true) : _send('DELETE', '/books/$bookId/read-progress');
@@ -216,9 +219,14 @@ class KomgaClient {
       _send(read ? 'POST' : 'DELETE', '/series/$seriesId/read-progress');
 
   /// Borra del servidor los ficheros de una serie (Komga exige un usuario administrador).
-  Future<void> deleteSeriesFiles(String seriesId) async {
+  Future<void> deleteSeriesFiles(String seriesId) => _deleteFile('/series/$seriesId/file');
+
+  /// Borra del servidor el archivo de un libro (capítulo). Necesita un usuario administrador.
+  Future<void> deleteBookFile(String bookId) => _deleteFile('/books/$bookId/file');
+
+  Future<void> _deleteFile(String path) async {
     try {
-      await _send('DELETE', '/series/$seriesId/file');
+      await _send('DELETE', path);
     } on KomgaException catch (e) {
       if (e.statusCode == 403 || e.statusCode == 401) {
         throw KomgaException('Tu usuario de ${source.name} no es administrador: no puede borrar', e.statusCode);

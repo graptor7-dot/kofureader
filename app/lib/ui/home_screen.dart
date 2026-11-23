@@ -353,6 +353,25 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RemoteScreen())),
             icon: const Icon(Icons.settings_remote_rounded),
           ),
+        if (isDesktop)
+          Builder(
+            builder: (context) {
+              final state = AppScope.of(context);
+              final on = state.manageMode;
+              return IconButton(
+                tooltip: on ? 'Salir del modo gestión' : 'Modo gestión',
+                onPressed: () {
+                  state.setManageMode(!on);
+                  showToast(
+                    context,
+                    on ? 'Modo gestión desactivado' : 'Modo gestión activado: entra en una serie',
+                    icon: Icons.admin_panel_settings_rounded,
+                  );
+                },
+                icon: Icon(Icons.admin_panel_settings_rounded, color: on ? Colors.redAccent : null),
+              );
+            },
+          ),
         IconButton(
           tooltip: 'Buscar',
           onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen())),
