@@ -143,6 +143,60 @@ class ManageBookActions extends StatelessWidget {
   }
 }
 
+/// Botón del modo gestión sobre la portada de un autor: marcar o quitar «revisado».
+class ManageReviewAction extends StatelessWidget {
+  final bool reviewed;
+  final VoidCallback onToggle;
+
+  const ManageReviewAction({super.key, required this.reviewed, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final size = (c.maxWidth * 0.38).clamp(40.0, 64.0);
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(Kofu.radius),
+            color: Colors.black.withValues(alpha: reviewed ? 0.25 : 0.45),
+          ),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _ActionButton(
+                  size: size,
+                  tooltip: reviewed ? 'Quitar revisado' : 'Marcar como revisado',
+                  icon: Icons.verified_rounded,
+                  color: Kofu.reviewed,
+                  filled: reviewed,
+                  onTap: onToggle,
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    reviewed ? 'Revisado' : 'Sin revisar',
+                    style: TextStyle(
+                      color: reviewed ? Kofu.reviewed : Colors.white70,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _ActionButton extends StatelessWidget {
   final double size;
   final String tooltip;

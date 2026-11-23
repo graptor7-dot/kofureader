@@ -14,6 +14,9 @@ abstract final class Kofu {
   static const muted = Color(0xFF9393A8);
   static const read = Color(0xFF4ADE80);
 
+  /// Autores revisados en el modo gestión.
+  static const reviewed = Color(0xFF2DD4BF);
+
   /// Ediciones completas.
   static const gold = Color(0xFFF5B942);
   static const goldGradient = LinearGradient(

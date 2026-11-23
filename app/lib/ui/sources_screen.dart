@@ -10,6 +10,7 @@ import '../data/source.dart';
 import '../data/sync_service.dart';
 import '../komga/komga_client.dart';
 import '../theme.dart';
+import 'desktop.dart';
 import 'downloads_screen.dart' show formatBytes;
 import 'widgets/update_widgets.dart';
 
@@ -65,6 +66,7 @@ class SourcesScreen extends StatelessWidget {
           const UpdateSettingsCard(),
           const SizedBox(height: 12),
           const _CoverCacheCard(),
+          if (isDesktop) ...[const SizedBox(height: 12), const _ReviewedCard()],
         ],
       ),
     );
@@ -624,6 +626,49 @@ class _SourceEditScreenState extends State<SourceEditScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Modo gestión del PC: quitar la marca de revisado de todos los autores.
+class _ReviewedCard extends StatelessWidget {
+  const _ReviewedCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = AppScope.of(context);
+    final n = state.reviewedCount;
+    return _Card(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.verified_rounded, color: Kofu.reviewed),
+          title: const Text('Autores revisados'),
+          subtitle: Text(
+            n == 0 ? 'Ninguno marcado' : '$n autor${n == 1 ? '' : 'es'} marcado${n == 1 ? '' : 's'} en el modo gestión',
+            style: const TextStyle(color: Kofu.muted),
+          ),
+          trailing: TextButton(
+            onPressed: n == 0
+                ? null
+                : () async {
+                    final ok = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        icon: const Icon(Icons.verified_rounded, color: Kofu.reviewed, size: 36),
+                        title: const Text('¿Quitar todas las marcas de revisado?'),
+                        content: Text('Los $n autores volverán a aparecer sin revisar.'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+                          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Quitar todas')),
+                        ],
+                      ),
+                    );
+                    if (ok == true) state.clearReviewed();
+                  },
+            child: const Text('Quitar todas'),
+          ),
+        ),
+      ],
     );
   }
 }

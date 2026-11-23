@@ -9,6 +9,7 @@ import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'tag_search_screen.dart';
+import 'desktop.dart';
 import 'widgets/manage.dart';
 import 'extras_screens.dart';
 import 'list_screen.dart';
@@ -299,6 +300,24 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (done > 0) client.scanLibrary(series.first.libraryId).catchError((_) {});
   }
 
+  /// Marca como revisados los autores elegidos (o les quita la marca si ya lo estaban todos).
+  void _toggleSelectedReviewed() {
+    final state = AppScope.read(context);
+    final series = _selection.values;
+    final on = !series.every((s) => state.isReviewed(_sourceId, s.id));
+    for (final s in series) {
+      state.setReviewed(_sourceId, s.id, on);
+    }
+    showToast(
+      context,
+      series.length == 1
+          ? (on ? 'Autor marcado como revisado' : 'Autor sin marcar')
+          : (on ? '${series.length} autores marcados como revisados' : '${series.length} autores sin marcar'),
+      icon: Icons.verified_rounded,
+    );
+    _selection.clear();
+  }
+
   void _favoriteSelected() {
     final data = AppScope.read(context).data;
     data.addAll(data.favorites.id, _selection.values.map((s) => s.snapshot(_sourceId)));
@@ -364,6 +383,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     },
                     icon: const Icon(Icons.emoji_events_rounded, color: Kofu.gold),
                   ),
+                  if (state.manageMode)
+                    IconButton(
+                      tooltip: 'Marcar / quitar revisado',
+                      onPressed: _toggleSelectedReviewed,
+                      icon: const Icon(Icons.verified_rounded, color: Kofu.reviewed),
+                    ),
                   if (state.manageMode)
                     IconButton(
                       tooltip: 'Borrar del servidor',
@@ -457,7 +482,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ),
                 ),
-              if (state.manageMode) const SliverToBoxAdapter(child: ManageBanner()),
+              if (state.manageMode)
+                const SliverToBoxAdapter(
+                  child: ManageBanner(
+                    text: 'Modo gestión activo: marca cada autor como revisado, o entra para gestionar sus capítulos.',
+                  ),
+                ),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -525,6 +555,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         headers: client.authHeaders,
                         title: s.title,
                         gone: state.isGone(_sourceId, s.id),
+                        reviewed: isDesktop && state.isReviewed(_sourceId, s.id),
+                        overlay: state.manageMode && !_selection.active && !state.isGone(_sourceId, s.id)
+                            ? ManageReviewAction(
+                                reviewed: state.isReviewed(_sourceId, s.id),
+                                onToggle: () => state.setReviewed(_sourceId, s.id, !state.isReviewed(_sourceId, s.id)),
+                              )
+                            : null,
                         subtitle: [
                           if (state.extras.rating(snap.ref) > 0) '★${state.extras.rating(snap.ref)}',
                           '${s.booksCount} libro${s.booksCount == 1 ? '' : 's'}',

@@ -327,6 +327,21 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Autores (series) marcados como revisados en el modo gestión del PC (se sincroniza).
+  bool isReviewed(String sourceId, String seriesId) => data.pref('reviewed:$sourceId:$seriesId') == '1';
+
+  void setReviewed(String sourceId, String seriesId, bool on) =>
+      data.setPref('reviewed:$sourceId:$seriesId', on ? '1' : null);
+
+  int get reviewedCount => data.prefKeys.where((k) => k.startsWith('reviewed:')).length;
+
+  /// Quita la marca de revisado de todos los autores.
+  void clearReviewed() {
+    for (final k in data.prefKeys.where((k) => k.startsWith('reviewed:')).toList()) {
+      data.setPref(k, null);
+    }
+  }
+
   /// Modo gestión (solo PC, no se guarda): botones rápidos en cada capítulo.
   bool manageMode = false;
 

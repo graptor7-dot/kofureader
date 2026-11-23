@@ -72,6 +72,7 @@ class CoverCard extends StatelessWidget {
   final IconData? kindIcon;
   final ImageProvider? image; // sustituye a imageUrl (p. ej. portada descargada)
   final bool downloaded;
+  final bool reviewed; // revisado en el modo gestión (solo PC)
   final bool gone; // borrado del servidor: se muestra apagado y tachado
   final Widget? overlay; // encima de la portada (p. ej. botones del modo gestión)
   final bool stacked; // agrupación: se dibuja como un montón de libros
@@ -104,8 +105,11 @@ class CoverCard extends StatelessWidget {
     this.stacked = false,
     this.overlay,
     this.gone = false,
+    this.reviewed = false,
     this.downloadProgress,
   });
+
+  double get _top => reviewed && !gone ? 30 : 8;
 
   Widget _cover() {
     return AnimatedContainer(
@@ -142,11 +146,16 @@ class CoverCard extends StatelessWidget {
                 ),
               ),
             ),
-            if (badge != null) Positioned(top: 8, right: 8, child: _Pill(text: badge!)),
-            if (complete && !selectionActive) const Positioned(top: 8, left: 8, child: CompleteBadge()),
+            if (badge != null)
+              Positioned(
+                top: _top,
+                right: 8,
+                child: _Pill(text: badge!),
+              ),
+            if (complete && !selectionActive) Positioned(top: _top, left: 8, child: const CompleteBadge()),
             if (tag != null && !complete && !selectionActive)
               Positioned(
-                top: 8,
+                top: _top,
                 left: 8,
                 child: _TagPill(text: tag!, color: tagColor ?? Kofu.accent2),
               ),
@@ -192,7 +201,7 @@ class CoverCard extends StatelessWidget {
               ),
             if (selectionActive)
               Positioned(
-                top: 8,
+                top: _top,
                 left: 8,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 160),
@@ -206,6 +215,17 @@ class CoverCard extends StatelessWidget {
                   child: selected ? const Icon(Icons.check_rounded, size: 16, color: Colors.white) : null,
                 ),
               ),
+            if (reviewed && !gone) ...[
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(Kofu.radius - 1),
+                    border: Border.all(color: Kofu.reviewed, width: 2.5),
+                  ),
+                ),
+              ),
+              const Positioned(top: 0, left: 0, right: 0, child: _ReviewedStrip()),
+            ],
             if (gone) const Positioned.fill(child: _GoneMark()),
             if (overlay != null) Positioned.fill(child: overlay!),
           ],
@@ -448,6 +468,33 @@ class _GoneMark extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Franja superior de "Revisado" (modo gestión del PC).
+class _ReviewedStrip extends StatelessWidget {
+  const _ReviewedStrip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 22,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [Kofu.reviewed, Kofu.reviewed.withValues(alpha: 0.75)]),
+        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
+      ),
+      child: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.verified_rounded, size: 13, color: Colors.black),
+          SizedBox(width: 4),
+          Text(
+            'REVISADO',
+            style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.2),
+          ),
+        ],
       ),
     );
   }
