@@ -6,7 +6,12 @@ import '../../theme.dart';
 import 'selection.dart';
 
 /// Pide un nombre de lista. Devuelve null si se cancela.
-Future<String?> askListName(BuildContext context, {String? initial, String title = 'Nueva lista'}) {
+Future<String?> askListName(
+  BuildContext context, {
+  String? initial,
+  String title = 'Nueva lista',
+  String hint = 'Nombre de la lista',
+}) {
   final controller = TextEditingController(text: initial);
   return showDialog<String>(
     context: context,
@@ -22,7 +27,7 @@ Future<String?> askListName(BuildContext context, {String? initial, String title
           controller: controller,
           autofocus: true,
           textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(hintText: 'Nombre de la lista'),
+          decoration: InputDecoration(hintText: hint),
           onSubmitted: (_) => submit(),
         ),
         actions: [

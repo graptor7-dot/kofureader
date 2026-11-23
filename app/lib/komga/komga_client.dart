@@ -215,6 +215,18 @@ class KomgaClient {
   Future<void> setSeriesRead(String seriesId, bool read) =>
       _send(read ? 'POST' : 'DELETE', '/series/$seriesId/read-progress');
 
+  /// Borra del servidor los ficheros de una serie (Komga exige un usuario administrador).
+  Future<void> deleteSeriesFiles(String seriesId) async {
+    try {
+      await _send('DELETE', '/series/$seriesId/file');
+    } on KomgaException catch (e) {
+      if (e.statusCode == 403 || e.statusCode == 401) {
+        throw KomgaException('Tu usuario de ${source.name} no es administrador: no puede borrar', e.statusCode);
+      }
+      rethrow;
+    }
+  }
+
   /// Descarga binaria (páginas, portadas). Devuelve los bytes y el tipo MIME.
   Future<(List<int>, String?)> getBytes(String url) async {
     final res = await _http.get(Uri.parse(url), headers: authHeaders).timeout(const Duration(seconds: 60));

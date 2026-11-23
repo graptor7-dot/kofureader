@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/app_scope.dart';
+import '../data/chapter_groups.dart';
 import '../data/source.dart';
 import '../data/user_data.dart';
 import '../komga/chapter_kind.dart';
@@ -29,8 +30,9 @@ Future<void> openBook(BuildContext context, Source source, String bookId, {Strin
     builder: (_) => const Center(child: CircularProgressIndicator()),
   );
   List<KomgaBook> books;
+  String? sid = seriesId;
   try {
-    final sid = seriesId ?? (await client.book(bookId)).seriesId;
+    sid ??= (await client.book(bookId)).seriesId;
     books = await client.books(sid);
   } catch (e) {
     // Sin conexión: si el libro está descargado, leer con los descargados de su serie.
@@ -42,6 +44,7 @@ Future<void> openBook(BuildContext context, Source source, String bookId, {Strin
       }
       return;
     }
+    sid = local.seriesId;
     books = [
       for (final b in state.downloads.ofSeries(source.id, local.seriesId))
         b.toKomgaBook(
@@ -58,6 +61,10 @@ Future<void> openBook(BuildContext context, Source source, String bookId, {Strin
   classifyChapters(books, override: (b) => state.data.pref(chapterKindPrefKey(source.id, b.id)));
   final opened = books.where((b) => b.id == bookId).firstOrNull;
   if (opened != null) books = books.where((b) => b.isExtra == opened.isExtra).toList();
+  // Y su agrupación: dentro de una se sigue por ella; fuera, se saltan los agrupados.
+  final groupOf = ChapterGroups(state.data, source.id, sid).byBook;
+  final group = groupOf[bookId]?.id;
+  books = books.where((b) => groupOf[b.id]?.id == group).toList();
   final index = books.indexWhere((b) => b.id == bookId);
   await startReading(context, source, books, index < 0 ? 0 : index, page: page);
 }

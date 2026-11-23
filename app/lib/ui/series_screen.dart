@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../data/app_scope.dart';
 import '../data/app_state.dart';
+import '../data/chapter_groups.dart';
 import '../data/snapshots.dart';
 import '../data/source.dart';
 import '../komga/chapter_kind.dart';
@@ -22,7 +23,10 @@ class SeriesScreen extends StatefulWidget {
   final String seriesId;
   final KomgaSeries? initial;
 
-  const SeriesScreen({super.key, required this.source, required this.seriesId, this.initial});
+  /// Si no es nulo, se muestra solo esa agrupación de la serie (como si fuera otra serie).
+  final String? groupId;
+
+  const SeriesScreen({super.key, required this.source, required this.seriesId, this.initial, this.groupId});
 
   // Fichas abiertas, para que el lector pueda volver a la que ya hay en vez de abrir otra.
   static final _openRoutes = <String, Route<dynamic>>{};
@@ -63,7 +67,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
     _load();
   }
 
-  String get _routeKey => '${widget.source.id}|${widget.seriesId}';
+  String get _routeKey => '${widget.source.id}|${widget.seriesId}${widget.groupId == null ? '' : '|${widget.groupId}'}';
   Route<dynamic>? _route;
 
   @override
@@ -145,10 +149,13 @@ class _SeriesScreenState extends State<SeriesScreen> {
   }
 
   Future<void> _downloadSheet() async {
-    final books = _books;
+    final books = _scope;
     if (books == null) return;
     final downloads = AppScope.read(context).downloads;
-    final local = downloads.ofSeries(_sourceId, widget.seriesId);
+    final local = downloads
+        .ofSeries(_sourceId, widget.seriesId)
+        .where((d) => books.any((b) => b.id == d.bookId))
+        .toList();
     final unread = books.where((b) => !b.isRead).toList();
     final queued = books.where((b) => downloads.progressOf(_sourceId, b.id) != null).toList();
     await showModalBottomSheet(
@@ -188,7 +195,9 @@ class _SeriesScreenState extends State<SeriesScreen> {
             if (local.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.delete_outline_rounded, color: Kofu.accent),
-                title: Text('Borrar descargas de esta serie (${local.length})'),
+                title: Text(
+                  '${widget.groupId == null ? 'Borrar descargas de esta serie' : 'Borrar descargas de la agrupación'} (${local.length})',
+                ),
                 onTap: () async {
                   Navigator.pop(ctx);
                   for (final b in local) {
@@ -238,9 +247,29 @@ class _SeriesScreenState extends State<SeriesScreen> {
     return n < readMax;
   }
 
+  ChapterGroups get _groups => ChapterGroups(AppScope.read(context).data, _sourceId, widget.seriesId);
+
+  /// Agrupación que se está viendo (null en la ficha normal de la serie).
+  ChapterGroup? get _group => widget.groupId == null ? null : _groups.byId(widget.groupId!);
+
+  /// Libros de esta vista: los de la agrupación, o todos los de la serie.
+  List<KomgaBook>? get _scope {
+    final books = _books;
+    if (books == null || widget.groupId == null) return books;
+    final ids = _group?.bookIds.toSet() ?? const <String>{};
+    return books.where((b) => ids.contains(b.id)).toList();
+  }
+
+  /// Libros sueltos: en la ficha de la serie, los que no están en ninguna agrupación.
+  List<KomgaBook> get _loose {
+    if (widget.groupId != null) return _scope!;
+    final grouped = _groups.byBook;
+    return _books!.where((b) => !grouped.containsKey(b.id)).toList();
+  }
+
   /// Capítulos normales (sin extras), en orden de lectura.
-  List<KomgaBook> get _chapters => _books!.where((b) => !b.isExtra).toList();
-  List<KomgaBook> get _extras => _books!.where((b) => b.isExtra).toList();
+  List<KomgaBook> get _chapters => _loose.where((b) => !b.isExtra).toList();
+  List<KomgaBook> get _extras => _loose.where((b) => b.isExtra).toList();
 
   /// Orden de la lista: los últimos arriba (preferencia sincronizada, para todas las series).
   bool get _newestFirst => AppScope.read(context).data.pref('chapter_order') == 'desc';
@@ -255,19 +284,251 @@ class _SeriesScreenState extends State<SeriesScreen> {
     );
   }
 
-  List<KomgaBook> get _visible {
+  bool _passes(KomgaBook b) {
     final extras = AppScope.read(context).extras;
-    final list = (_showExtras ? _extras : _chapters)
-        .where((b) => _status.isEmpty || _status.contains(b.status))
-        .where((b) => _tag == null || extras.tagsOf(b.snapshot(_sourceId).ref).contains(_tag))
-        .toList();
-    return _newestFirst ? list.reversed.toList() : list;
+    return (_status.isEmpty || _status.contains(b.status)) &&
+        (_tag == null || extras.tagsOf(b.snapshot(_sourceId).ref).contains(_tag));
+  }
+
+  /// Lo que se ve en la cuadrícula: libros sueltos y, en Capítulos, las agrupaciones
+  /// (cada una en el sitio de su primer libro).
+  List<Object> get _visibleItems {
+    final grouped = widget.groupId == null ? _groups.byBook : const <String, ChapterGroup>{};
+    final items = <Object>[];
+    final shown = <String>{};
+    for (final b in _scope!) {
+      final g = grouped[b.id];
+      if (g != null) {
+        if (_showExtras || shown.contains(g.id)) continue;
+        if (_membersOf(g).any(_passes)) {
+          shown.add(g.id);
+          items.add(g);
+        }
+      } else if (b.isExtra == _showExtras && _passes(b)) {
+        items.add(b);
+      }
+    }
+    return _newestFirst ? items.reversed.toList() : items;
+  }
+
+  List<KomgaBook> get _visible => _visibleItems.whereType<KomgaBook>().toList();
+
+  List<KomgaBook> _membersOf(ChapterGroup g) {
+    final ids = g.bookIds.toSet();
+    return _books!.where((b) => ids.contains(b.id)).toList();
+  }
+
+  // ---- Agrupaciones ----
+
+  Future<void> _openGroup(ChapterGroup g) async {
+    _selection.clear();
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SeriesScreen(source: widget.source, seriesId: widget.seriesId, initial: _series, groupId: g.id),
+      ),
+    );
+    if (mounted) _load();
+  }
+
+  /// Hoja «Agrupar»: nueva agrupación con lo seleccionado, meterlo en una que ya hay o sacarlo.
+  Future<void> _groupSelected() async {
+    final ids = _selection.values.map((b) => b.id).toList();
+    final groups = _groups.all;
+    final current = widget.groupId;
+    final r = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(ctx).height * 0.7),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  'Agrupar ${ids.length} libro${ids.length == 1 ? '' : 's'}',
+                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.create_new_folder_rounded, color: Kofu.accent),
+                title: const Text('Nueva agrupación…'),
+                onTap: () => Navigator.pop(ctx, '+'),
+              ),
+              if (current != null)
+                ListTile(
+                  leading: const Icon(Icons.drive_folder_upload_rounded),
+                  title: const Text('Sacar de esta agrupación'),
+                  onTap: () => Navigator.pop(ctx, '-'),
+                ),
+              for (final g in groups)
+                if (g.id != current)
+                  ListTile(
+                    leading: const Icon(Icons.folder_rounded),
+                    title: Text(g.name),
+                    subtitle: Text('${g.bookIds.length} libro${g.bookIds.length == 1 ? '' : 's'}'),
+                    onTap: () => Navigator.pop(ctx, g.id),
+                  ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (r == null || !mounted) return;
+    final api = _groups;
+    final n = ids.length;
+    switch (r) {
+      case '+':
+        final name = await askListName(context, title: 'Nueva agrupación', hint: 'Nombre de la miniserie');
+        if (name == null || !mounted) return;
+        api.create(name, ids);
+        showToast(context, 'Agrupación «$name» creada', icon: Icons.folder_rounded);
+      case '-':
+        api.removeBooks(ids);
+        showToast(context, 'Sacado${n == 1 ? '' : 's'} de la agrupación', icon: Icons.drive_folder_upload_rounded);
+      default:
+        api.addTo(r, ids);
+        showToast(context, 'Añadido${n == 1 ? '' : 's'} a «${api.byId(r)?.name}»', icon: Icons.folder_rounded);
+    }
+    _selection.clear();
+    setState(() {});
+    // Si la agrupación que se veía se ha quedado vacía, desaparece: volver a la serie.
+    if (current != null && _group == null) Navigator.pop(context);
+  }
+
+  /// Opciones de una agrupación: nombre, portada y deshacerla.
+  Future<void> _groupOptions(ChapterGroup g) async {
+    final r = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.folder_rounded, color: Kofu.accent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      g.name,
+                      style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_rounded),
+              title: const Text('Cambiar nombre'),
+              onTap: () => Navigator.pop(ctx, 'name'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.image_rounded),
+              title: const Text('Cambiar portada'),
+              onTap: () => Navigator.pop(ctx, 'cover'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_off_rounded, color: Kofu.accent),
+              title: const Text('Deshacer agrupación'),
+              subtitle: const Text('Los libros vuelven a salir sueltos; no se borra nada'),
+              onTap: () => Navigator.pop(ctx, 'dissolve'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (r == null || !mounted) return;
+    switch (r) {
+      case 'name':
+        final name = await askListName(context, initial: g.name, title: 'Nombre de la agrupación', hint: 'Nombre');
+        if (name == null || !mounted) return;
+        _groups.update(g.copyWith(name: name));
+      case 'cover':
+        await _pickGroupCover(g);
+      case 'dissolve':
+        _groups.dissolve(g.id);
+        showToast(context, 'Agrupación «${g.name}» deshecha', icon: Icons.folder_off_rounded);
+        if (widget.groupId == g.id) {
+          Navigator.pop(context);
+          return;
+        }
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// Elige qué libro de la agrupación pone la portada.
+  Future<void> _pickGroupCover(ChapterGroup g) async {
+    final state = AppScope.read(context);
+    final client = state.client(_sourceId);
+    final members = _membersOf(g);
+    final current = g.coverIn(members.map((b) => b.id).toList());
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(ctx).height * 0.75,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  'Elige la portada de «${g.name}»',
+                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  gridDelegate: coverGridDelegate,
+                  itemCount: members.length,
+                  itemBuilder: (_, i) {
+                    final b = members[i];
+                    final cover = state.downloads.isDownloaded(_sourceId, b.id)
+                        ? state.downloads.coverFile(_sourceId, b.id)
+                        : null;
+                    return CoverCard(
+                      imageUrl: client.bookThumbnailUrl(b.id),
+                      headers: client.authHeaders,
+                      image: cover == null ? null : FileImage(cover),
+                      title: b.title,
+                      selected: b.id == current,
+                      badge: b.id == current ? 'Portada' : null,
+                      onTap: () => Navigator.pop(ctx, b.id),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    _groups.update(g.copyWith(coverBookId: picked));
+    setState(() {});
+    showToast(context, 'Portada cambiada', icon: Icons.image_rounded);
+  }
+
+  /// Portada de una agrupación: la del libro elegido (o el primero).
+  ({String url, ImageProvider? image}) _groupCover(AppState state, ChapterGroup g) {
+    final client = state.client(_sourceId);
+    final id = g.coverIn(_membersOf(g).map((b) => b.id).toList()) ?? '';
+    final file = state.downloads.isDownloaded(_sourceId, id) ? state.downloads.coverFile(_sourceId, id) : null;
+    return (url: client.bookThumbnailUrl(id), image: file == null ? null : FileImage(file));
   }
 
   /// Se lee siguiendo su apartado: de un capítulo se pasa al siguiente capítulo
   /// (saltando los extras), y de un extra al siguiente extra.
   Future<void> _open(KomgaBook book) async {
-    final books = book.isExtra ? _extras : _chapters;
+    // Un libro agrupado (p. ej. al pulsar Continuar en la serie) sigue por su agrupación.
+    final group = widget.groupId == null ? _groups.byBook[book.id] : null;
+    final pool = group == null ? _loose : _membersOf(group);
+    final books = pool.where((b) => b.isExtra == book.isExtra).toList();
     await startReading(context, widget.source, books, books.indexOf(book));
     if (mounted) _load();
   }
@@ -377,7 +638,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final books = _books;
+    final books = _scope;
     return PopScope(
       canPop: !_selection.active,
       onPopInvokedWithResult: (didPop, _) => _selection.clear(),
@@ -391,6 +652,11 @@ class _SeriesScreenState extends State<SeriesScreen> {
                 onClose: _selection.clear,
                 onSelectAll: () => _selection.selectAll({for (final b in _visible) b.id: b}),
                 actions: [
+                  IconButton(
+                    tooltip: 'Agrupar',
+                    onPressed: _groupSelected,
+                    icon: const Icon(Icons.create_new_folder_rounded),
+                  ),
                   IconButton(
                     tooltip: 'Añadir a Favoritos',
                     onPressed: _favoriteSelected,
@@ -501,7 +767,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
                       ),
                     ),
                   ),
-                if (books.any((b) => b.isExtra))
+                if (_loose.any((b) => b.isExtra))
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -511,12 +777,12 @@ class _SeriesScreenState extends State<SeriesScreen> {
                           ButtonSegment(
                             value: false,
                             icon: const Icon(Icons.menu_book_rounded),
-                            label: Text('Capítulos · ${books.where((b) => !b.isExtra).length}'),
+                            label: Text('Capítulos · ${_chapters.length}'),
                           ),
                           ButtonSegment(
                             value: true,
                             icon: const Icon(Icons.auto_awesome_rounded),
-                            label: Text('Extras · ${books.where((b) => b.isExtra).length}'),
+                            label: Text('Extras · ${_extras.length}'),
                           ),
                         ],
                         selected: {_showExtras},
@@ -556,14 +822,36 @@ class _SeriesScreenState extends State<SeriesScreen> {
 
   Widget _booksGrid(AppState state) {
     final client = state.client(_sourceId);
-    final visible = _visible;
+    final visible = _visibleItems;
     return SliverPadding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       sliver: SliverGrid.builder(
         gridDelegate: coverGridDelegate,
         itemCount: visible.length,
         itemBuilder: (context, i) {
-          final b = visible[i];
+          final item = visible[i];
+          if (item is ChapterGroup) {
+            final members = _membersOf(item);
+            final read = members.where((b) => b.isRead).length;
+            final cover = _groupCover(state, item);
+            return CoverCard(
+              imageUrl: cover.url,
+              headers: client.authHeaders,
+              image: cover.image,
+              stacked: true,
+              title: item.name,
+              subtitle: '${members.length} libro${members.length == 1 ? '' : 's'} · $read leído${read == 1 ? '' : 's'}',
+              tag: 'Agrupación',
+              tagColor: Kofu.accent,
+              kindIcon: Icons.folder_rounded,
+              read: members.isNotEmpty && read == members.length,
+              progress: members.isEmpty || read == members.length ? 0 : read / members.length,
+              selectionActive: _selection.active,
+              onTap: _selection.active ? () {} : () => _openGroup(item),
+              onLongPress: _selection.active ? null : () => _groupOptions(item),
+            );
+          }
+          final b = item as KomgaBook;
           final downloaded = state.downloads.isDownloaded(_sourceId, b.id);
           final cover = downloaded ? state.downloads.coverFile(_sourceId, b.id) : null;
           return CoverCard(
@@ -600,8 +888,14 @@ class _SeriesScreenState extends State<SeriesScreen> {
   Widget _header(AppState state) {
     final client = state.client(_sourceId);
     final series = _series;
-    final books = _books;
-    final thumb = client.seriesThumbnailUrl(widget.seriesId);
+    final books = _scope;
+    final group = _group;
+    final groupCover = group == null || _books == null ? null : _groupCover(state, group);
+    final thumb = groupCover?.url ?? client.seriesThumbnailUrl(widget.seriesId);
+    Widget coverImage() => groupCover?.image != null
+        ? KomgaImage.provider(groupCover!.image!)
+        : KomgaImage(url: thumb, headers: client.authHeaders);
+    final title = group == null ? series?.title ?? '' : '${series?.title ?? ''} – ${group.name}';
     final snap = series?.snapshot(_sourceId);
     final favorite = snap != null && state.data.isFavorite(snap.ref);
     final override = state.seriesModeOverride(_sourceId, widget.seriesId);
@@ -612,7 +906,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
     return SliverAppBar(
       pinned: true,
       expandedHeight: coverWidth * 1.45 + kToolbarHeight + 40,
-      title: Text(series?.title ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
       actions: [
         IconButton(
           tooltip: _newestFirst
@@ -626,7 +920,23 @@ class _SeriesScreenState extends State<SeriesScreen> {
           onPressed: _pickMode,
           icon: Icon(Icons.chrome_reader_mode_rounded, color: override != null ? Kofu.accent : null),
         ),
-        if (!_offline)
+        if (group != null)
+          IconButton(
+            tooltip: 'Opciones de la agrupación',
+            onPressed: () => _groupOptions(group),
+            icon: const Icon(Icons.folder_rounded),
+          ),
+        if (!_offline && group != null)
+          PopupMenuButton<bool>(
+            tooltip: 'Leído / no leído',
+            icon: const Icon(Icons.done_all_rounded),
+            onSelected: (read) => _setRead(books ?? const [], read),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: true, child: Text('Marcar agrupación como leída')),
+              PopupMenuItem(value: false, child: Text('Marcar agrupación como no leída')),
+            ],
+          ),
+        if (!_offline && group == null)
           PopupMenuButton<String>(
             tooltip: 'Más opciones',
             onSelected: (v) {
@@ -678,10 +988,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
             // Fondo: portada desenfocada.
             ImageFiltered(
               imageFilter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-              child: Opacity(
-                opacity: 0.55,
-                child: KomgaImage(url: thumb, headers: client.authHeaders),
-              ),
+              child: Opacity(opacity: 0.55, child: coverImage()),
             ),
             const DecoratedBox(
               decoration: BoxDecoration(
@@ -706,10 +1013,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
                         borderRadius: BorderRadius.circular(Kofu.radius),
                         boxShadow: const [BoxShadow(color: Colors.black87, blurRadius: 24, offset: Offset(0, 10))],
                       ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(Kofu.radius),
-                        child: KomgaImage(url: thumb, headers: client.authHeaders),
-                      ),
+                      child: ClipRRect(borderRadius: BorderRadius.circular(Kofu.radius), child: coverImage()),
                     ),
                     const SizedBox(width: 20),
                     Expanded(
@@ -723,7 +1027,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
                           ),
                           const SizedBox(height: 10),
                           Text(
-                            series?.title ?? '',
+                            title,
                             maxLines: 3,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(

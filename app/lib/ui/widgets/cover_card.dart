@@ -72,6 +72,7 @@ class CoverCard extends StatelessWidget {
   final IconData? kindIcon;
   final ImageProvider? image; // sustituye a imageUrl (p. ej. portada descargada)
   final bool downloaded;
+  final bool stacked; // agrupación: se dibuja como un montón de libros
   final double? downloadProgress; // no nulo mientras se descarga
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
@@ -98,8 +99,114 @@ class CoverCard extends StatelessWidget {
     this.kindIcon,
     this.image,
     this.downloaded = false,
+    this.stacked = false,
     this.downloadProgress,
   });
+
+  Widget _cover() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(Kofu.radius),
+        border: Border.all(
+          color: selected ? Kofu.accent : Colors.white.withValues(alpha: 0.06),
+          width: selected ? 2.5 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: (selected ? Kofu.accent : Colors.black).withValues(alpha: selected ? 0.35 : 0.5),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(Kofu.radius - 1),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            const ColoredBox(color: Kofu.surfaceHigh),
+            placeholder ?? (image != null ? KomgaImage.provider(image!) : KomgaImage(url: imageUrl, headers: headers)),
+            if (read) ColoredBox(color: Colors.black.withValues(alpha: 0.5)),
+            // Degradado inferior para que se lean las insignias.
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.center,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Color(0x99000000)],
+                ),
+              ),
+            ),
+            if (badge != null) Positioned(top: 8, right: 8, child: _Pill(text: badge!)),
+            if (complete && !selectionActive) const Positioned(top: 8, left: 8, child: CompleteBadge()),
+            if (tag != null && !complete && !selectionActive)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: _TagPill(text: tag!, color: tagColor ?? Kofu.accent2),
+              ),
+            Positioned(
+              left: 8,
+              bottom: progress > 0 && progress < 1 ? 12 : 8,
+              child: Row(
+                children: [
+                  if (sourceColor != null) _Dot(color: sourceColor!),
+                  if (kindIcon != null) ...[const SizedBox(width: 6), Icon(kindIcon, size: 14, color: Colors.white70)],
+                  if (downloadProgress != null) ...[
+                    const SizedBox(width: 6),
+                    SizedBox.square(
+                      dimension: 14,
+                      child: CircularProgressIndicator(
+                        value: downloadProgress == 0 ? null : downloadProgress,
+                        strokeWidth: 2.5,
+                        color: Colors.white,
+                        backgroundColor: Colors.white24,
+                      ),
+                    ),
+                  ] else if (downloaded) ...[
+                    const SizedBox(width: 6),
+                    const Icon(Icons.download_done_rounded, size: 16, color: Kofu.read),
+                  ],
+                ],
+              ),
+            ),
+            if (favorite)
+              const Positioned(right: 8, bottom: 8, child: Icon(Icons.favorite_rounded, size: 18, color: Kofu.accent)),
+            if (read) const Center(child: Icon(Icons.check_circle_rounded, color: Kofu.read, size: 32)),
+            if (progress > 0 && progress < 1)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 4,
+                  backgroundColor: Colors.black45,
+                  color: Kofu.accent,
+                ),
+              ),
+            if (selectionActive)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: selected ? Kofu.accent : Colors.black45,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: selected ? const Icon(Icons.check_rounded, size: 16, color: Colors.white) : null,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -116,118 +223,7 @@ class CoverCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 160),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(Kofu.radius),
-                    border: Border.all(
-                      color: selected ? Kofu.accent : Colors.white.withValues(alpha: 0.06),
-                      width: selected ? 2.5 : 1,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: (selected ? Kofu.accent : Colors.black).withValues(alpha: selected ? 0.35 : 0.5),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(Kofu.radius - 1),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        const ColoredBox(color: Kofu.surfaceHigh),
-                        placeholder ??
-                            (image != null ? KomgaImage.provider(image!) : KomgaImage(url: imageUrl, headers: headers)),
-                        if (read) ColoredBox(color: Colors.black.withValues(alpha: 0.5)),
-                        // Degradado inferior para que se lean las insignias.
-                        const DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.center,
-                              end: Alignment.bottomCenter,
-                              colors: [Colors.transparent, Color(0x99000000)],
-                            ),
-                          ),
-                        ),
-                        if (badge != null) Positioned(top: 8, right: 8, child: _Pill(text: badge!)),
-                        if (complete && !selectionActive) const Positioned(top: 8, left: 8, child: CompleteBadge()),
-                        if (tag != null && !complete && !selectionActive)
-                          Positioned(
-                            top: 8,
-                            left: 8,
-                            child: _TagPill(text: tag!, color: tagColor ?? Kofu.accent2),
-                          ),
-                        Positioned(
-                          left: 8,
-                          bottom: progress > 0 && progress < 1 ? 12 : 8,
-                          child: Row(
-                            children: [
-                              if (sourceColor != null) _Dot(color: sourceColor!),
-                              if (kindIcon != null) ...[
-                                const SizedBox(width: 6),
-                                Icon(kindIcon, size: 14, color: Colors.white70),
-                              ],
-                              if (downloadProgress != null) ...[
-                                const SizedBox(width: 6),
-                                SizedBox.square(
-                                  dimension: 14,
-                                  child: CircularProgressIndicator(
-                                    value: downloadProgress == 0 ? null : downloadProgress,
-                                    strokeWidth: 2.5,
-                                    color: Colors.white,
-                                    backgroundColor: Colors.white24,
-                                  ),
-                                ),
-                              ] else if (downloaded) ...[
-                                const SizedBox(width: 6),
-                                const Icon(Icons.download_done_rounded, size: 16, color: Kofu.read),
-                              ],
-                            ],
-                          ),
-                        ),
-                        if (favorite)
-                          const Positioned(
-                            right: 8,
-                            bottom: 8,
-                            child: Icon(Icons.favorite_rounded, size: 18, color: Kofu.accent),
-                          ),
-                        if (read) const Center(child: Icon(Icons.check_circle_rounded, color: Kofu.read, size: 32)),
-                        if (progress > 0 && progress < 1)
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            child: LinearProgressIndicator(
-                              value: progress,
-                              minHeight: 4,
-                              backgroundColor: Colors.black45,
-                              color: Kofu.accent,
-                            ),
-                          ),
-                        if (selectionActive)
-                          Positioned(
-                            top: 8,
-                            left: 8,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 160),
-                              width: 24,
-                              height: 24,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: selected ? Kofu.accent : Colors.black45,
-                                border: Border.all(color: Colors.white, width: 2),
-                              ),
-                              child: selected ? const Icon(Icons.check_rounded, size: 16, color: Colors.white) : null,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              Expanded(child: stacked ? _Stack(child: _cover()) : _cover()),
               const SizedBox(height: 8),
               Text(
                 title,
@@ -382,6 +378,33 @@ class CompleteBadge extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Dos hojas desplazadas detrás de la portada: aspecto de carpeta / montón.
+class _Stack extends StatelessWidget {
+  final Widget child;
+
+  const _Stack({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget sheet(double alpha) => DecoratedBox(
+      decoration: BoxDecoration(
+        color: Color.lerp(Kofu.surfaceHigh, Kofu.accent, alpha),
+        borderRadius: BorderRadius.circular(Kofu.radius),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 10, offset: Offset(0, 4))],
+      ),
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Positioned.fill(left: 12, right: 0, top: 0, bottom: 12, child: sheet(0.10)),
+        Positioned.fill(left: 6, right: 6, top: 6, bottom: 6, child: sheet(0.22)),
+        Positioned.fill(left: 0, right: 12, top: 12, bottom: 0, child: child),
+      ],
     );
   }
 }

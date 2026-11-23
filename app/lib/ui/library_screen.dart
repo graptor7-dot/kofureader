@@ -8,6 +8,7 @@ import '../data/snapshots.dart';
 import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
+import 'desktop.dart' show isDesktop;
 import 'extras_screens.dart';
 import 'list_screen.dart';
 import 'navigation.dart';
@@ -38,6 +39,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String? _error;
   String _search = '';
   SeriesSort _sort = SeriesSort.title;
+
+  // Modo gestión (solo en el PC): botón grande por obra con acciones, y borrar del servidor.
+  bool _manage = false;
 
   // Modos locales (sin pedir a Komga): obras valoradas o con una etiqueta.
   bool _rated = false;
@@ -234,6 +238,132 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
+  // ---- Modo gestión ----
+
+  String _plural(int n, String one) => '$n $one${n == 1 ? '' : 's'}';
+
+  /// Acciones de gestión sobre una obra o sobre la selección.
+  Future<void> _manageSheet(List<KomgaSeries> series) async {
+    final one = series.length == 1;
+    final title = one ? series.first.title : '${_plural(series.length, 'obra')} seleccionadas';
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+              child: Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.done_all_rounded),
+              title: const Text('Marcar como leída'),
+              onTap: () => Navigator.pop(ctx, 'read'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.remove_done_rounded),
+              title: const Text('Marcar como no leída'),
+              onTap: () => Navigator.pop(ctx, 'unread'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.favorite_rounded, color: Kofu.accent),
+              title: const Text('Añadir a Favoritos'),
+              onTap: () => Navigator.pop(ctx, 'fav'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.playlist_add_rounded),
+              title: const Text('Añadir a lista'),
+              onTap: () => Navigator.pop(ctx, 'list'),
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent),
+              title: const Text('Borrar del servidor', style: TextStyle(color: Colors.redAccent)),
+              subtitle: const Text('Borra los archivos del NAS. No se puede deshacer.'),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    final data = AppScope.read(context).data;
+    switch (action) {
+      case 'read' || 'unread':
+        _selection.selectAll({for (final s in series) s.id: s});
+        await _setSelectedRead(action == 'read');
+      case 'fav':
+        data.addAll(data.favorites.id, series.map((s) => s.snapshot(_sourceId)));
+        showToast(context, '${_plural(series.length, 'obra')} en Favoritos', icon: Icons.favorite_rounded);
+        _selection.clear();
+      case 'list':
+        await showAddToListSheet(context, series.map((s) => s.snapshot(_sourceId)).toList());
+        _selection.clear();
+      case 'delete':
+        await _deleteSeries(series);
+    }
+  }
+
+  Future<void> _deleteSeries(List<KomgaSeries> series) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 40),
+        title: Text(
+          '¿Borrar ${series.length == 1 ? '"${series.first.title}"' : _plural(series.length, 'obra')} del servidor?',
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Se borrarán sus archivos del NAS. No se puede deshacer.'),
+            if (series.length > 1) ...[
+              const SizedBox(height: 12),
+              for (final s in series.take(8)) Text('• ${s.title}', maxLines: 1, overflow: TextOverflow.ellipsis),
+              if (series.length > 8) Text('… y ${series.length - 8} más', style: const TextStyle(color: Kofu.muted)),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Borrar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final client = AppScope.read(context).client(_sourceId);
+    _selection.clear();
+    var done = 0;
+    String? error;
+    for (final s in series) {
+      try {
+        await client.deleteSeriesFiles(s.id);
+        done++;
+        if (mounted) setState(() => _items.removeWhere((x) => x.id == s.id));
+      } catch (e) {
+        error = '$e';
+        break; // si falla una (p. ej. sin permiso), no seguir
+      }
+    }
+    if (!mounted) return;
+    showToast(
+      context,
+      error ?? '${_plural(done, 'obra')} borrada${done == 1 ? '' : 's'} del servidor',
+      icon: error == null ? Icons.delete_forever_rounded : Icons.error_outline,
+    );
+    if (done > 0) _total -= done;
+  }
+
   void _favoriteSelected() {
     final data = AppScope.read(context).data;
     data.addAll(data.favorites.id, _selection.values.map((s) => s.snapshot(_sourceId)));
@@ -299,6 +429,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     },
                     icon: const Icon(Icons.emoji_events_rounded, color: Kofu.gold),
                   ),
+                  if (_manage)
+                    IconButton(
+                      tooltip: 'Borrar del servidor',
+                      onPressed: () => _deleteSeries(_selection.values),
+                      icon: const Icon(Icons.delete_forever_rounded, color: Colors.redAccent),
+                    ),
                 ],
               )
             : null,
@@ -313,6 +449,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   pinned: true,
                   expandedHeight: 120,
                   actions: [
+                    if (isDesktop)
+                      IconButton(
+                        tooltip: _manage ? 'Salir del modo gestión' : 'Modo gestión',
+                        onPressed: () => setState(() => _manage = !_manage),
+                        icon: Icon(Icons.admin_panel_settings_rounded, color: _manage ? Colors.redAccent : null),
+                      ),
                     IconButton(
                       tooltip: 'Favoritos de esta biblioteca',
                       icon: const Icon(Icons.favorite_rounded, color: Kofu.accent),
@@ -378,6 +520,31 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ),
                 ),
+              if (_manage)
+                SliverToBoxAdapter(
+                  child: Container(
+                    margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(Kofu.radius),
+                      border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.admin_panel_settings_rounded, color: Colors.redAccent, size: 20),
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Text(
+                            'Modo gestión: pulsa «Gestionar» en una obra, o mantén pulsadas varias para actuar en masa.',
+                            style: TextStyle(fontSize: 13),
+                          ),
+                        ),
+                        TextButton(onPressed: () => setState(() => _manage = false), child: const Text('Salir')),
+                      ],
+                    ),
+                  ),
+                ),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -440,7 +607,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     itemBuilder: (context, i) {
                       final s = _items[i];
                       final snap = s.snapshot(_sourceId);
-                      return CoverCard(
+                      final card = CoverCard(
                         imageUrl: client.seriesThumbnailUrl(s.id),
                         headers: client.authHeaders,
                         title: s.title,
@@ -456,6 +623,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         selectionActive: _selection.active,
                         onTap: _selection.active ? () => _selection.toggle(s.id, s) : () => _open(s),
                         onLongPress: () => _selection.toggle(s.id, s),
+                      );
+                      if (!_manage || _selection.active) return card;
+                      return Stack(
+                        children: [
+                          card,
+                          Positioned.fill(
+                            bottom: 48, // sobre la portada, no sobre el título
+                            child: Center(child: _ManageButton(onPressed: () => _manageSheet([s]))),
+                          ),
+                        ],
                       );
                     },
                   ),
@@ -485,4 +662,28 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
     );
   }
+}
+
+/// Botón grande de "Gestionar" sobre cada obra en el modo gestión.
+class _ManageButton extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _ManageButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) => FilledButton.icon(
+    onPressed: onPressed,
+    style: FilledButton.styleFrom(
+      backgroundColor: Colors.black.withValues(alpha: 0.75),
+      foregroundColor: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Colors.redAccent, width: 1.5),
+      ),
+      textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+    ),
+    icon: const Icon(Icons.tune_rounded),
+    label: const Text('Gestionar'),
+  );
 }
