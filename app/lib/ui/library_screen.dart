@@ -8,6 +8,7 @@ import '../data/snapshots.dart';
 import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
+import 'tag_search_screen.dart';
 import 'widgets/manage.dart';
 import 'extras_screens.dart';
 import 'list_screen.dart';
@@ -383,6 +384,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   pinned: true,
                   expandedHeight: 120,
                   actions: [
+                    IconButton(
+                      tooltip: 'Buscar capítulos por tags',
+                      icon: const Icon(Icons.label_rounded),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => TagSearchScreen(entry: widget.entry)),
+                      ),
+                    ),
                     IconButton(
                       tooltip: 'Favoritos de esta biblioteca',
                       icon: const Icon(Icons.favorite_rounded, color: Kofu.accent),

@@ -99,6 +99,8 @@ class KomgaBook {
   final KomgaReadProgress? readProgress;
   final DateTime? created; // cuándo se añadió a Komga
   final String name; // nombre del fichero (sin extensión)
+  final String url; // ruta del archivo en el servidor de Komga
+  final List<String> tags; // tags del archivo (ComicInfo), en minúsculas
   final bool deleted; // Komga ya sabe que falta el archivo (pendiente de vaciar la papelera)
 
   KomgaBook({
@@ -113,6 +115,8 @@ class KomgaBook {
     this.created,
     String? name,
     this.deleted = false,
+    this.tags = const [],
+    this.url = '',
   }) : name = name ?? title;
 
   bool get isRead => readProgress?.completed ?? false;
@@ -148,6 +152,8 @@ class KomgaBook {
       pagesCount: media['pagesCount'] as int? ?? 0,
       created: DateTime.tryParse(j['created'] as String? ?? ''),
       deleted: j['deleted'] as bool? ?? false,
+      tags: [for (final t in meta['tags'] as List? ?? const []) '$t'],
+      url: j['url'] as String? ?? '',
       readProgress: rp == null
           ? null
           : KomgaReadProgress(

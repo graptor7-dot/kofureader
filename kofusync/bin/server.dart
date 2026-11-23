@@ -17,6 +17,7 @@ import 'dart:math';
 
 import 'package:archive/archive.dart';
 
+part 'comics.dart';
 part 'novels.dart';
 part 'novels_volumes.dart';
 part 'tv.dart';
@@ -46,6 +47,7 @@ Future<void> main() async {
   await _load();
   await _loadTv(dataDir);
   _initNovels();
+  _initComics(dataDir);
 
   final port = int.tryParse(env['KOFUSYNC_PORT'] ?? '') ?? 8080;
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
@@ -113,16 +115,18 @@ Future<void> _handle(HttpRequest req) async {
     if (req.method == 'GET' && path == '/health') {
       return _json(req, 200, {
         'ok': true,
-        'version': 5,
+        'version': 6,
         'remote': true,
         'novels': true,
         'novelSearch': true,
         'novelVolumes': true,
+        'comicTags': true,
       });
     }
     if (req.method == 'GET' &&
         (path == '/novels' || path.startsWith('/novels/')))
       return await _novels(req);
+    if (req.method == 'GET' && path == '/comics/tags') return await _comics(req);
     if (req.method == 'GET' && (path == '/tv' || path == '/tv/'))
       return _tvHtml(req);
     if (req.method == 'GET' && path == '/tv/page') return await _tvPage(req);

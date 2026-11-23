@@ -121,6 +121,23 @@ class KomgaClient {
     return KomgaPage.fromJson(json as Map<String, dynamic>, KomgaBook.fromJson).content;
   }
 
+  /// Todos los libros de una biblioteca (para buscar por tags en la app).
+  Future<List<KomgaBook>> allBooks(String libraryId) async {
+    final out = <KomgaBook>[];
+    for (var page = 0; page < 100; page++) {
+      final json = await _get('/books', {
+        'library_id': libraryId,
+        'page': page,
+        'size': 500,
+        'sort': 'metadata.title,asc',
+      });
+      final p = KomgaPage.fromJson(json as Map<String, dynamic>, KomgaBook.fromJson);
+      out.addAll(p.content);
+      if (p.last) break;
+    }
+    return out;
+  }
+
   /// "Te toca": siguiente capítulo sin empezar de series que estás leyendo (Komga "on deck").
   Future<List<KomgaBook>> onDeck({int size = 20}) async {
     final json = await _get('/books/ondeck', {'page': 0, 'size': size});
