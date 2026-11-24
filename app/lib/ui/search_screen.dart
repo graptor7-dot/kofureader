@@ -224,6 +224,6 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Widget _grid(int count, Widget Function(int) builder) => SliverPadding(
     padding: const EdgeInsets.symmetric(horizontal: 16),
-    sliver: SliverGrid.builder(gridDelegate: coverGridDelegate, itemCount: count, itemBuilder: (_, i) => builder(i)),
+    sliver: CoverSliverGrid(itemCount: count, itemBuilder: (_, i) => builder(i)),
   );
 }

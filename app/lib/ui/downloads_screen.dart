@@ -217,8 +217,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     ),
     SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      sliver: SliverGrid.builder(
-        gridDelegate: coverGridDelegate,
+      sliver: CoverSliverGrid(
         itemCount: works.length,
         itemBuilder: (context, i) {
           final w = works[i];
@@ -292,8 +291,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       ),
       SliverPadding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        sliver: SliverGrid.builder(
-          gridDelegate: coverGridDelegate,
+        sliver: CoverSliverGrid(
           itemCount: books.length,
           itemBuilder: (context, i) {
             final b = books[i];

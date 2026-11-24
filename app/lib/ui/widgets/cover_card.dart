@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/cover_cache.dart';
 import '../../theme.dart';
+import '../desktop.dart';
 
 /// Imagen (de Komga o de un fichero descargado) con aparición suave.
 class KomgaImage extends StatelessWidget {
@@ -74,6 +75,8 @@ class CoverCard extends StatelessWidget {
   final bool downloaded;
   final bool reviewed; // revisado en el modo gestión (solo PC)
   final bool gone; // borrado del servidor: se muestra apagado y tachado
+  final List<Widget> pills; // pastillas arriba a la izquierda (nº de capítulo, idioma…)
+  final Widget? actions; // entre la portada y el título (botones del modo gestión)
   final Widget? overlay; // encima de la portada (p. ej. botones del modo gestión)
   final bool stacked; // agrupación: se dibuja como un montón de libros
   final double? downloadProgress; // no nulo mientras se descarga
@@ -104,6 +107,8 @@ class CoverCard extends StatelessWidget {
     this.downloaded = false,
     this.stacked = false,
     this.overlay,
+    this.pills = const [],
+    this.actions,
     this.gone = false,
     this.reviewed = false,
     this.downloadProgress,
@@ -152,8 +157,16 @@ class CoverCard extends StatelessWidget {
                 right: 8,
                 child: _Pill(text: badge!),
               ),
-            if (complete && !selectionActive) Positioned(top: _top, left: 8, child: const CompleteBadge()),
-            if (tag != null && !complete && !selectionActive)
+            if (complete && !selectionActive && pills.isEmpty)
+              Positioned(top: _top, left: 8, child: const CompleteBadge()),
+            if (pills.isNotEmpty && !selectionActive)
+              Positioned(
+                top: _top,
+                left: 8,
+                right: badge != null ? 56 : 8,
+                child: Wrap(spacing: 4, runSpacing: 4, children: [if (complete) const CompleteBadge(), ...pills]),
+              ),
+            if (tag != null && !complete && !selectionActive && pills.isEmpty)
               Positioned(
                 top: _top,
                 left: 8,
@@ -237,6 +250,9 @@ class CoverCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // En la rejilla por filas del PC la tarjeta crece con el título: se ve entero.
+    final full = CoverGridScope.fullTitle(context);
+    final cover = stacked ? _Stack(child: _cover()) : _cover();
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
@@ -249,12 +265,13 @@ class CoverCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(child: stacked ? _Stack(child: _cover()) : _cover()),
+              if (full) AspectRatio(aspectRatio: coverAspectRatio, child: cover) else Expanded(child: cover),
+              if (actions != null) Padding(padding: const EdgeInsets.only(top: 8), child: actions!),
               const SizedBox(height: 8),
               Text(
                 title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+                maxLines: full ? null : 2,
+                overflow: full ? null : TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
                   fontWeight: FontWeight.w600,
                   height: 1.25,
@@ -364,6 +381,99 @@ class SourceChip extends StatelessWidget {
           Text(
             label,
             style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Proporción de la portada cuando la tarjeta no tiene alto fijo.
+const coverAspectRatio = 0.68;
+
+/// Indica a las [CoverCard] que están en una rejilla por filas (alto libre).
+class CoverGridScope extends InheritedWidget {
+  const CoverGridScope({super.key, required super.child});
+
+  static bool fullTitle(BuildContext context) => context.dependOnInheritedWidgetOfExactType<CoverGridScope>() != null;
+
+  @override
+  bool updateShouldNotify(CoverGridScope oldWidget) => false;
+}
+
+/// Rejilla de portadas. En el PC va por filas, para que cada tarjeta crezca con su
+/// título (se lee entero) y con los botones del modo gestión; en móvil y tablet, rejilla fija.
+class CoverSliverGrid extends StatelessWidget {
+  final int itemCount;
+  final NullableIndexedWidgetBuilder itemBuilder;
+
+  const CoverSliverGrid({super.key, required this.itemCount, required this.itemBuilder});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isDesktop) {
+      return SliverGrid.builder(gridDelegate: coverGridDelegate, itemCount: itemCount, itemBuilder: itemBuilder);
+    }
+    const d = coverGridDelegate;
+    return SliverLayoutBuilder(
+      builder: (context, c) {
+        final width = c.crossAxisExtent;
+        final columns = (width / (d.maxCrossAxisExtent + d.crossAxisSpacing)).ceil().clamp(1, 1000);
+        final itemWidth = (width - d.crossAxisSpacing * (columns - 1)) / columns;
+        final rows = (itemCount / columns).ceil();
+        return SliverList.builder(
+          itemCount: rows,
+          itemBuilder: (context, r) => Padding(
+            padding: EdgeInsets.only(bottom: r == rows - 1 ? 0 : d.mainAxisSpacing),
+            child: CoverGridScope(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = r * columns; i < r * columns + columns; i++) ...[
+                    if (i > r * columns) SizedBox(width: d.crossAxisSpacing),
+                    SizedBox(
+                      width: itemWidth,
+                      child: i < itemCount ? itemBuilder(context, i) ?? const SizedBox() : const SizedBox(),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Pastilla pequeña sobre la portada (nº de capítulo, idioma, traducción máquina…).
+class CoverPill extends StatelessWidget {
+  final String text;
+  final Color color;
+  final Color? textColor;
+  final IconData? icon;
+  final bool solid;
+
+  const CoverPill({super.key, required this.text, required this.color, this.textColor, this.icon, this.solid = true});
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = textColor ?? (solid ? Colors.black : color);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: solid ? color : Colors.black.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: solid ? Colors.black26 : color.withValues(alpha: 0.8)),
+        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[Icon(icon, size: 11, color: fg), const SizedBox(width: 3)],
+          Text(
+            text,
+            style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 0.3, height: 1.1),
           ),
         ],
       ),

@@ -219,8 +219,7 @@ class _NovelLibraryScreenState extends State<NovelLibraryScreen> {
                 else
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-                    sliver: SliverGrid.builder(
-                      gridDelegate: coverGridDelegate,
+                    sliver: CoverSliverGrid(
                       itemCount: works.length,
                       itemBuilder: (context, i) {
                         final w = works[i];

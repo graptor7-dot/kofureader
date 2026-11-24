@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/app_scope.dart';
 import '../data/chapter_groups.dart';
+import '../data/chapter_label.dart';
 import '../data/source.dart';
 import '../data/user_data.dart';
 import '../komga/chapter_kind.dart';
@@ -60,11 +61,16 @@ Future<void> openBook(BuildContext context, Source source, String bookId, {Strin
   // Seguir el apartado del libro: capítulos sin extras, o solo extras.
   classifyChapters(books, override: (b) => state.data.pref(chapterKindPrefKey(source.id, b.id)));
   final opened = books.where((b) => b.id == bookId).firstOrNull;
-  if (opened != null) books = books.where((b) => b.isExtra == opened.isExtra).toList();
-  // Y su agrupación: dentro de una se sigue por ella; fuera, se saltan los agrupados.
+  // Su agrupación: dentro de una se sigue por ella en orden de número (con sus extras
+  // entre capítulo y capítulo); fuera, se saltan los agrupados y se sigue el apartado.
   final groupOf = ChapterGroups(state.data, source.id, sid).byBook;
   final group = groupOf[bookId]?.id;
-  books = books.where((b) => groupOf[b.id]?.id == group).toList();
+  if (group != null) {
+    books = sortByChapterNumber(books.where((b) => groupOf[b.id]?.id == group).toList(), (b) => b.name);
+  } else {
+    if (opened != null) books = books.where((b) => b.isExtra == opened.isExtra).toList();
+    books = books.where((b) => groupOf[b.id] == null).toList();
+  }
   final index = books.indexWhere((b) => b.id == bookId);
   await startReading(context, source, books, index < 0 ? 0 : index, page: page);
 }

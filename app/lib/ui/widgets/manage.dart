@@ -31,119 +31,83 @@ class ManageBanner extends StatelessWidget {
   }
 }
 
-/// Botones rápidos sobre la portada de un capítulo en el modo gestión:
-/// borrar arriba y, en el centro, 2×2 con leído, no leído, favorito y lista.
+/// Pestaña del modo gestión bajo la portada de un capítulo: 2×3 con leído, no leído,
+/// favorito, lista, marcar (para agrupar) y borrar. La portada queda limpia.
 class ManageBookActions extends StatelessWidget {
   final bool read;
   final bool favorite;
+  final bool marked;
   final VoidCallback onRead;
   final VoidCallback onUnread;
   final VoidCallback onFavorite;
   final VoidCallback onList;
+  final VoidCallback onMark;
   final VoidCallback onDelete;
 
   const ManageBookActions({
     super.key,
     required this.read,
     required this.favorite,
+    required this.marked,
     required this.onRead,
     required this.onUnread,
     required this.onFavorite,
     required this.onList,
+    required this.onMark,
     required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, c) {
-        // Botones a la medida de la portada (más grandes en pantallas anchas).
-        final size = (c.maxWidth * 0.3).clamp(34.0, 54.0);
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(Kofu.radius),
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Colors.black.withValues(alpha: 0.55), Colors.black.withValues(alpha: 0.35)],
-            ),
+    return _Tab(
+      highlight: marked ? Kofu.accent : null,
+      children: [
+        [
+          _TabButton(
+            tooltip: 'Marcar como leído',
+            icon: Icons.done_all_rounded,
+            color: Kofu.read,
+            active: read,
+            onTap: onRead,
           ),
-          child: Stack(
-            children: [
-              Positioned(
-                top: 6,
-                right: 6,
-                child: _ActionButton(
-                  size: size * 0.85,
-                  tooltip: 'Borrar del servidor',
-                  icon: Icons.delete_forever_rounded,
-                  color: Colors.redAccent,
-                  filled: true,
-                  onTap: onDelete,
-                ),
-              ),
-              Center(
-                child: Padding(
-                  padding: EdgeInsets.only(top: size * 0.5),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _ActionButton(
-                            size: size,
-                            tooltip: 'Marcar como leído',
-                            icon: Icons.done_all_rounded,
-                            color: Kofu.read,
-                            filled: read,
-                            onTap: onRead,
-                          ),
-                          SizedBox(width: size * 0.25),
-                          _ActionButton(
-                            size: size,
-                            tooltip: 'Marcar como no leído',
-                            icon: Icons.remove_done_rounded,
-                            color: Colors.white,
-                            onTap: onUnread,
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: size * 0.25),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _ActionButton(
-                            size: size,
-                            tooltip: favorite ? 'Quitar de Favoritos' : 'Añadir a Favoritos',
-                            icon: favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                            color: Kofu.accent,
-                            filled: favorite,
-                            onTap: onFavorite,
-                          ),
-                          SizedBox(width: size * 0.25),
-                          _ActionButton(
-                            size: size,
-                            tooltip: 'Añadir a lista',
-                            icon: Icons.playlist_add_rounded,
-                            color: Kofu.gold,
-                            onTap: onList,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+          _TabButton(
+            tooltip: 'Marcar como no leído',
+            icon: Icons.remove_done_rounded,
+            color: Colors.white,
+            active: !read,
+            onTap: onUnread,
           ),
-        );
-      },
+          _TabButton(
+            tooltip: favorite ? 'Quitar de Favoritos' : 'Añadir a Favoritos',
+            icon: favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+            color: Kofu.accent,
+            active: favorite,
+            onTap: onFavorite,
+          ),
+        ],
+        [
+          _TabButton(tooltip: 'Añadir a lista', icon: Icons.playlist_add_rounded, color: Kofu.gold, onTap: onList),
+          _TabButton(
+            tooltip: marked ? 'Desmarcar' : 'Marcar para agrupar',
+            icon: marked ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
+            color: Kofu.accent2,
+            active: marked,
+            onTap: onMark,
+          ),
+          _TabButton(
+            tooltip: 'Borrar del servidor',
+            icon: Icons.delete_forever_rounded,
+            color: Colors.redAccent,
+            danger: true,
+            onTap: onDelete,
+          ),
+        ],
+      ],
     );
   }
 }
 
-/// Botón del modo gestión sobre la portada de un autor: marcar o quitar «revisado».
+/// Pestaña del modo gestión bajo la portada de un autor: marcar o quitar «revisado».
 class ManageReviewAction extends StatelessWidget {
   final bool reviewed;
   final VoidCallback onToggle;
@@ -152,84 +116,115 @@ class ManageReviewAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, c) {
-        final size = (c.maxWidth * 0.38).clamp(40.0, 64.0);
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(Kofu.radius),
-            color: Colors.black.withValues(alpha: reviewed ? 0.25 : 0.45),
-          ),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+    return Tooltip(
+      message: reviewed ? 'Quitar revisado' : 'Marcar como revisado',
+      child: Material(
+        color: reviewed ? Kofu.reviewed : Kofu.surfaceHigh,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onToggle,
+          child: Container(
+            height: 34,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: reviewed ? Kofu.reviewed : Kofu.outline),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _ActionButton(
-                  size: size,
-                  tooltip: reviewed ? 'Quitar revisado' : 'Marcar como revisado',
-                  icon: Icons.verified_rounded,
-                  color: Kofu.reviewed,
-                  filled: reviewed,
-                  onTap: onToggle,
+                Icon(
+                  reviewed ? Icons.verified_rounded : Icons.radio_button_unchecked_rounded,
+                  size: 17,
+                  color: reviewed ? Colors.black : Kofu.reviewed,
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    reviewed ? 'Revisado' : 'Sin revisar',
-                    style: TextStyle(
-                      color: reviewed ? Kofu.reviewed : Colors.white70,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
+                const SizedBox(width: 6),
+                Text(
+                  reviewed ? 'Revisado' : 'Marcar revisado',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: reviewed ? Colors.black : Kofu.text,
                   ),
                 ),
               ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }
 
-class _ActionButton extends StatelessWidget {
-  final double size;
+class _Tab extends StatelessWidget {
+  final List<List<Widget>> children;
+  final Color? highlight;
+
+  const _Tab({required this.children, this.highlight});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Kofu.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: highlight ?? Kofu.outline, width: highlight != null ? 1.5 : 1),
+      ),
+      child: Column(
+        children: [
+          for (var r = 0; r < children.length; r++) ...[
+            if (r > 0) const SizedBox(height: 4),
+            Row(
+              children: [
+                for (var i = 0; i < children[r].length; i++) ...[
+                  if (i > 0) const SizedBox(width: 4),
+                  Expanded(child: children[r][i]),
+                ],
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TabButton extends StatelessWidget {
   final String tooltip;
   final IconData icon;
   final Color color;
-  final bool filled; // estado activo: fondo de color
+  final bool active; // estado actual: fondo de color
+  final bool danger; // borrar: siempre en rojo suave
   final VoidCallback onTap;
 
-  const _ActionButton({
-    required this.size,
+  const _TabButton({
     required this.tooltip,
     required this.icon,
     required this.color,
     required this.onTap,
-    this.filled = false,
+    this.active = false,
+    this.danger = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final bg = active
+        ? color.withValues(alpha: 0.9)
+        : danger
+        ? Colors.redAccent.withValues(alpha: 0.14)
+        : Kofu.surfaceHigh;
     return Tooltip(
       message: tooltip,
+      waitDuration: const Duration(milliseconds: 400),
       child: Material(
-        color: filled ? color.withValues(alpha: 0.9) : Colors.black.withValues(alpha: 0.7),
-        shape: CircleBorder(side: BorderSide(color: color.withValues(alpha: 0.9), width: 1.5)),
-        elevation: 4,
-        shadowColor: Colors.black,
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
         child: InkWell(
-          customBorder: const CircleBorder(),
+          borderRadius: BorderRadius.circular(8),
           onTap: onTap,
-          child: SizedBox.square(
-            dimension: size,
-            child: Icon(icon, size: size * 0.5, color: filled ? Colors.black : color),
-          ),
+          child: SizedBox(height: 32, child: Icon(icon, size: 18, color: active ? Colors.black : color)),
         ),
       ),
     );

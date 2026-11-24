@@ -14,6 +14,9 @@ abstract final class Kofu {
   static const muted = Color(0xFF9393A8);
   static const read = Color(0xFF4ADE80);
 
+  /// Pastilla de idioma de los capítulos.
+  static const language = Color(0xFF38BDF8);
+
   /// Autores revisados en el modo gestión.
   static const reviewed = Color(0xFF2DD4BF);
 

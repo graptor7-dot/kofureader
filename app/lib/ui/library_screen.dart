@@ -9,7 +9,6 @@ import '../data/user_data.dart';
 import '../komga/models.dart';
 import '../theme.dart';
 import 'tag_search_screen.dart';
-import 'desktop.dart';
 import 'widgets/manage.dart';
 import 'extras_screens.dart';
 import 'list_screen.dart';
@@ -221,8 +220,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
     return SliverPadding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
-      sliver: SliverGrid.builder(
-        gridDelegate: coverGridDelegate,
+      sliver: CoverSliverGrid(
         itemCount: items.length,
         itemBuilder: (context, i) {
           final (item, stars) = items[i];
@@ -544,8 +542,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               if (!_rated && _tag == null)
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  sliver: SliverGrid.builder(
-                    gridDelegate: coverGridDelegate,
+                  sliver: CoverSliverGrid(
                     itemCount: _items.length,
                     itemBuilder: (context, i) {
                       final s = _items[i];
@@ -555,8 +552,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         headers: client.authHeaders,
                         title: s.title,
                         gone: state.isGone(_sourceId, s.id),
-                        reviewed: isDesktop && state.isReviewed(_sourceId, s.id),
-                        overlay: state.manageMode && !_selection.active && !state.isGone(_sourceId, s.id)
+                        reviewed: state.manageMode && state.isReviewed(_sourceId, s.id),
+                        actions: state.manageMode && !_selection.active && !state.isGone(_sourceId, s.id)
                             ? ManageReviewAction(
                                 reviewed: state.isReviewed(_sourceId, s.id),
                                 onToggle: () => state.setReviewed(_sourceId, s.id, !state.isReviewed(_sourceId, s.id)),

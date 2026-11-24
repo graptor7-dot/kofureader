@@ -270,8 +270,7 @@ class _ListScreenState extends State<ListScreen> {
             else
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
-                sliver: SliverGrid.builder(
-                  gridDelegate: coverGridDelegate,
+                sliver: CoverSliverGrid(
                   itemCount: visible.length,
                   itemBuilder: (context, i) {
                     final item = visible[i].item;

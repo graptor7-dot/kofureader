@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../data/app_scope.dart';
 import '../data/app_state.dart';
 import '../data/chapter_groups.dart';
+import '../data/chapter_label.dart';
 import '../data/snapshots.dart';
 import '../data/source.dart';
 import '../komga/chapter_kind.dart';
@@ -58,6 +59,9 @@ class _SeriesScreenState extends State<SeriesScreen> {
   String? _error;
   final Set<ReadStatus> _status = {};
   final _selection = SelectionController<KomgaBook>();
+
+  /// Modo gestión: capítulos marcados con el botón «marcar» para agruparlos.
+  final _marked = <String, KomgaBook>{};
 
   String get _sourceId => widget.source.id;
 
@@ -259,7 +263,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
     final books = _books;
     if (books == null || widget.groupId == null) return books;
     final ids = _group?.bookIds.toSet() ?? const <String>{};
-    return books.where((b) => ids.contains(b.id)).toList();
+    return sortByChapterNumber(books.where((b) => ids.contains(b.id)).toList(), (b) => b.name);
   }
 
   /// Libros sueltos: en la ficha de la serie, los que no están en ninguna agrupación.
@@ -306,18 +310,21 @@ class _SeriesScreenState extends State<SeriesScreen> {
           shown.add(g.id);
           items.add(g);
         }
-      } else if (b.isExtra == _showExtras && _passes(b)) {
+      } else if ((_inGroup || b.isExtra == _showExtras) && _passes(b)) {
         items.add(b);
       }
     }
     return _newestFirst ? items.reversed.toList() : items;
   }
 
+  /// Dentro de una carpeta no se separan los extras: van entre capítulo y capítulo.
+  bool get _inGroup => widget.groupId != null;
+
   List<KomgaBook> get _visible => _visibleItems.whereType<KomgaBook>().toList();
 
   List<KomgaBook> _membersOf(ChapterGroup g) {
     final ids = g.bookIds.toSet();
-    return _books!.where((b) => ids.contains(b.id)).toList();
+    return sortByChapterNumber(_books!.where((b) => ids.contains(b.id)).toList(), (b) => b.name);
   }
 
   // ---- Agrupaciones ----
@@ -534,7 +541,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
       showToast(context, 'Este capítulo ya no está en el servidor', icon: Icons.delete_forever_rounded);
       return;
     }
-    final books = pool.where((b) => b.isExtra == book.isExtra && !_isGone(b)).toList();
+    final books = pool.where((b) => (group != null || _inGroup || b.isExtra == book.isExtra) && !_isGone(b)).toList();
     await startReading(context, widget.source, books, books.indexOf(book));
     if (mounted) _load();
   }
@@ -697,6 +704,194 @@ class _SeriesScreenState extends State<SeriesScreen> {
     await _load();
   }
 
+  // ---- Pastillas: nº de capítulo (en carpetas), idioma y traducción máquina ----
+
+  List<Widget> _pills(AppState state, KomgaBook b) {
+    final label = ChapterLabel.of(b.name);
+    final private = state.isLibraryPrivate(_sourceId, b.libraryId);
+    return [
+      if (_inGroup && label.pill != null)
+        CoverPill(
+          text: label.pill!,
+          color: label.extra ? Kofu.gold : Kofu.accent,
+          textColor: label.extra ? Colors.black : Colors.white,
+        ),
+      if (private && label.language != null) CoverPill(text: label.language!, color: Kofu.language, solid: false),
+      if (private && label.machine)
+        const CoverPill(text: 'TM', color: Kofu.accent2, icon: Icons.smart_toy_rounded, textColor: Colors.white),
+    ];
+  }
+
+  // ---- Modo gestión: marcar y agrupar ----
+
+  /// Botones flotantes mientras hay capítulos marcados: carpeta nueva o añadir a una.
+  Widget _markedBar() {
+    final n = _marked.length;
+    final others = _groups.all.where((g) => g.id != widget.groupId).toList();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FloatingActionButton.extended(
+          heroTag: 'group-new',
+          onPressed: _groupMarked,
+          icon: const Icon(Icons.create_new_folder_rounded),
+          label: Text('Agrupar ($n)', style: const TextStyle(fontWeight: FontWeight.w800)),
+        ),
+        if (others.isNotEmpty) ...[
+          const SizedBox(width: 10),
+          FloatingActionButton.extended(
+            heroTag: 'group-add',
+            backgroundColor: Kofu.surfaceHigh,
+            foregroundColor: Kofu.text,
+            onPressed: () => _addMarked(others),
+            icon: const Icon(Icons.drive_folder_upload_rounded),
+            label: Text('Añadir ($n)', style: const TextStyle(fontWeight: FontWeight.w800)),
+          ),
+        ],
+        const SizedBox(width: 10),
+        FloatingActionButton.small(
+          heroTag: 'group-clear',
+          tooltip: 'Desmarcar todo',
+          backgroundColor: Kofu.surfaceHigh,
+          foregroundColor: Kofu.muted,
+          onPressed: () => setState(_marked.clear),
+          child: const Icon(Icons.close_rounded),
+        ),
+      ],
+    );
+  }
+
+  /// Nueva carpeta con lo marcado; el nombre sale del capítulo con el número más bajo.
+  Future<void> _groupMarked() async {
+    final books = sortByChapterNumber(_marked.values.toList(), (b) => b.name);
+    final suggested = ChapterLabel.of(books.first.name).base;
+    final name = await askListName(
+      context,
+      initial: suggested,
+      title: 'Nueva carpeta',
+      message: 'La carpeta se llamará así (puedes cambiarlo):',
+      hint: 'Nombre de la carpeta',
+      action: 'Agrupar',
+    );
+    if (name == null || !mounted) return;
+    _groups.create(name, [for (final b in books) b.id]);
+    showToast(context, 'Carpeta «$name» creada con ${books.length}', icon: Icons.folder_rounded);
+    _afterGrouping();
+  }
+
+  Future<void> _addMarked(List<ChapterGroup> groups) async {
+    final n = _marked.length;
+    final id = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(ctx).height * 0.7),
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  'Añadir $n capítulo${n == 1 ? '' : 's'} a…',
+                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              for (final g in groups)
+                ListTile(
+                  leading: const Icon(Icons.folder_rounded, color: Kofu.accent),
+                  title: Text(g.name),
+                  subtitle: Text('${g.bookIds.length} capítulo${g.bookIds.length == 1 ? '' : 's'}'),
+                  onTap: () => Navigator.pop(ctx, g.id),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (id == null || !mounted) return;
+    final api = _groups;
+    api.addTo(id, _marked.keys.toList());
+    showToast(context, 'Añadido${n == 1 ? '' : 's'} a «${api.byId(id)?.name}»', icon: Icons.folder_rounded);
+    _afterGrouping();
+  }
+
+  void _afterGrouping() {
+    setState(_marked.clear);
+    // Si la carpeta que se veía se ha quedado vacía, desaparece: volver al autor.
+    if (widget.groupId != null && _group == null) Navigator.pop(context);
+  }
+
+  // ---- Modo gestión: autor revisado ----
+
+  Widget _reviewBar(AppState state) {
+    final reviewed = state.isReviewed(_sourceId, widget.seriesId);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: ManageReviewAction(
+              reviewed: reviewed,
+              onToggle: () => state.setReviewed(_sourceId, widget.seriesId, !reviewed),
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: Kofu.reviewed, foregroundColor: Colors.black),
+            onPressed: _nextBusy ? null : _reviewAndNext,
+            icon: _nextBusy
+                ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.skip_next_rounded),
+            label: const Text('Revisado y siguiente', style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _nextBusy = false;
+
+  /// Marca el autor como revisado y abre el siguiente sin revisar (por orden de título).
+  Future<void> _reviewAndNext() async {
+    final state = AppScope.read(context);
+    final series = _series;
+    if (series == null) return;
+    state.setReviewed(_sourceId, widget.seriesId, true);
+    setState(() => _nextBusy = true);
+    try {
+      final client = state.client(_sourceId);
+      final all = <KomgaSeries>[];
+      for (var page = 0; page < 50; page++) {
+        final p = await client.series(libraryId: series.libraryId, page: page, size: 500);
+        all.addAll(p.content);
+        if (p.last) break;
+      }
+      final i = all.indexWhere((s) => s.id == widget.seriesId);
+      final ordered = [...all.skip(i + 1), ...all.take(i < 0 ? 0 : i)];
+      final next = ordered
+          .where((s) => !state.isReviewed(_sourceId, s.id) && !state.isGone(_sourceId, s.id))
+          .firstOrNull;
+      if (!mounted) return;
+      if (next == null) {
+        showToast(context, '¡Todos los autores están revisados!', icon: Icons.verified_rounded);
+        return;
+      }
+      final left = all.where((s) => !state.isReviewed(_sourceId, s.id)).length;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SeriesScreen(source: widget.source, seriesId: next.id, initial: next),
+        ),
+      );
+      showToast(context, '${next.title} · quedan $left sin revisar', icon: Icons.verified_rounded);
+    } catch (e) {
+      if (mounted) showToast(context, '$e', icon: Icons.error_outline);
+    } finally {
+      if (mounted) setState(() => _nextBusy = false);
+    }
+  }
+
   Future<void> _addSelectedToList() async {
     await showAddToListSheet(context, _selection.values.map((b) => b.snapshot(_sourceId)).toList());
     _selection.clear();
@@ -710,7 +905,12 @@ class _SeriesScreenState extends State<SeriesScreen> {
       canPop: !_selection.active,
       onPopInvokedWithResult: (didPop, _) => _selection.clear(),
       child: Scaffold(
-        floatingActionButton: books == null || books.isEmpty
+        floatingActionButtonLocation: _marked.isNotEmpty && state.manageMode
+            ? FloatingActionButtonLocation.centerFloat
+            : null,
+        floatingActionButton: _marked.isNotEmpty && state.manageMode
+            ? _markedBar()
+            : books == null || books.isEmpty
             ? null
             : RandomFab(onPressed: _random, selectedCount: _selection.count),
         appBar: _selection.active
@@ -844,7 +1044,9 @@ class _SeriesScreenState extends State<SeriesScreen> {
                       ),
                     ),
                   ),
-                if (_loose.any((b) => b.isExtra))
+                if (state.manageMode && !_offline && widget.groupId == null)
+                  SliverToBoxAdapter(child: _reviewBar(state)),
+                if (!_inGroup && _loose.any((b) => b.isExtra))
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -876,7 +1078,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
                       for (final s in ReadStatus.values)
                         FilterChip(
                           label: Text(
-                            '${s.label} · ${books.where((b) => b.isExtra == _showExtras && b.status == s).length}',
+                            '${s.label} · ${books.where((b) => (_inGroup || b.isExtra == _showExtras) && b.status == s).length}',
                           ),
                           selected: _status.contains(s),
                           onSelected: (_) => setState(() => _status.contains(s) ? _status.remove(s) : _status.add(s)),
@@ -902,8 +1104,7 @@ class _SeriesScreenState extends State<SeriesScreen> {
     final visible = _visibleItems;
     return SliverPadding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      sliver: SliverGrid.builder(
-        gridDelegate: coverGridDelegate,
+      sliver: CoverSliverGrid(
         itemCount: visible.length,
         itemBuilder: (context, i) {
           final item = visible[i];
@@ -952,17 +1153,22 @@ class _SeriesScreenState extends State<SeriesScreen> {
             progress: b.inProgress ? b.progressFraction : 0,
             favorite: state.data.isFavorite(b.snapshot(_sourceId).ref),
             complete: state.data.isComplete(b.snapshot(_sourceId).ref),
-            selected: _selection.contains(b.id),
+            selected: _selection.contains(b.id) || (state.manageMode && _marked.containsKey(b.id)),
             selectionActive: _selection.active,
             gone: _isGone(b),
-            overlay: state.manageMode && !_offline && !_selection.active && !_isGone(b)
+            pills: _pills(state, b),
+            actions: state.manageMode && !_offline && !_selection.active && !_isGone(b)
                 ? ManageBookActions(
                     read: b.isRead,
                     favorite: state.data.isFavorite(b.snapshot(_sourceId).ref),
+                    marked: _marked.containsKey(b.id),
                     onRead: () => _setRead([b], true),
                     onUnread: () => _setRead([b], false),
                     onFavorite: () => state.data.toggleFavorite(b.snapshot(_sourceId)),
                     onList: () => showAddToListSheet(context, [b.snapshot(_sourceId)]),
+                    onMark: () => setState(() {
+                      if (_marked.remove(b.id) == null) _marked[b.id] = b;
+                    }),
                     onDelete: () => _deleteBooks([b]),
                   )
                 : null,

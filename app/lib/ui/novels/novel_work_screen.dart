@@ -458,8 +458,7 @@ class _NovelWorkScreenState extends State<NovelWorkScreen> {
       final current = last == null ? null : volumeOfChapter(last);
       return SliverPadding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
-        sliver: SliverGrid.builder(
-          gridDelegate: coverGridDelegate,
+        sliver: CoverSliverGrid(
           itemCount: volumes.length,
           itemBuilder: (context, i) {
             final v = volumes[i];

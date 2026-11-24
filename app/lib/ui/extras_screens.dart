@@ -350,8 +350,7 @@ class _TagsScreenState extends State<TagsScreen> {
             else
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
-                sliver: SliverGrid.builder(
-                  gridDelegate: coverGridDelegate,
+                sliver: CoverSliverGrid(
                   itemCount: items.length,
                   itemBuilder: (context, i) {
                     final item = items[i];

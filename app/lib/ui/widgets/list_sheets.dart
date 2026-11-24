@@ -11,6 +11,8 @@ Future<String?> askListName(
   String? initial,
   String title = 'Nueva lista',
   String hint = 'Nombre de la lista',
+  String action = 'Guardar',
+  String? message,
 }) {
   final controller = TextEditingController(text: initial);
   return showDialog<String>(
@@ -23,16 +25,26 @@ Future<String?> askListName(
 
       return AlertDialog(
         title: Text(title),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.sentences,
-          decoration: InputDecoration(hintText: hint),
-          onSubmitted: (_) => submit(),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (message != null) ...[
+              Text(message, style: const TextStyle(color: Kofu.muted)),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              controller: controller,
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: InputDecoration(hintText: hint),
+              onSubmitted: (_) => submit(),
+            ),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-          FilledButton(onPressed: submit, child: const Text('Guardar')),
+          FilledButton(onPressed: submit, child: Text(action)),
         ],
       );
     },
